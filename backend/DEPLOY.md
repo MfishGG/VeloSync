@@ -22,14 +22,35 @@
 
 ## 二、部署步骤
 
-### 1. 在云托管创建服务
+### 0. 如果你当初是用「官方模板」建的服务
+
+云托管新建服务时会引导你选模板，若选了 `WeixinCloud/wxcloudrun-django` 之类的官方示例，
+那么**服务里跑的是模板自带的演示代码（那个 `/api/count` 计数器），不是本项目**。
+屏幕上显示的 `wx.cloud.callContainer({...})` 也是模板的前端示例，本项目**不需要**。
+
+改法：进入服务的「代码源 / 构建配置」，把代码源改掉：
+
+| 配置项 | 改成 |
+|---|---|
+| 代码源 | GitHub → `MfishGG/VeloSync` |
+| 分支 | `master` |
+| **构建目录** | **`backend`** |
+| Dockerfile 路径 | `Dockerfile` |
+| 端口 | `80` |
+
+保存后重新部署即可。**域名不会变**（域名绑定在服务上，与代码源无关），
+所以之前拿到的 `https://xxx.sh.run.tcloudbase.com` 可以继续用。
+
+> 若不想改现有服务，也可以直接新建一个服务、选「代码仓库」而非模板。
+
+### 1. 创建服务（全新）
 
 控制台 → **云托管** → 新建服务，填写：
 
 | 配置项 | 填写值 |
 |---|---|
 | 服务名称 | `velosync-api` |
-| 部署方式 | **代码仓库（GitHub）** |
+| 部署方式 | **代码仓库（GitHub）**，不要选模板 |
 | 仓库 | `MfishGG/VeloSync` |
 | 分支 | `master` |
 | **构建目录** | `backend` ← 关键，Dockerfile 在这个子目录 |
@@ -41,38 +62,55 @@
 
 控制台 → **云托管 → MySQL**（或「云数据库」）→ 新建实例，记录以下四项：
 
-- 内网地址（形如 `sh-xxx.sql.tencentcdb.com`）
-- 端口
-- 用户名
+- 内网地址（形如 `sh-xxx.sql.tencentcdb.com`，或内网 IP 如 `10.3.101.119`）
+- 端口（通常 `3306`）
+- 用户名（通常 `root`）
 - 密码
 
-同时创建一个库：`velosync`（字符集选 `utf8mb4`）。
+同时创建一个库：`velosync`（字符集选 `utf8mb4`）：
+
+```sql
+CREATE DATABASE IF NOT EXISTS velosync
+  DEFAULT CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+```
+
+> ⚠️ **库必须先手动创建**。Django 的 `migrate` 只能建表，不能建库；库不存在时容器启动会在
+> `migrate` 阶段报 `Unknown database 'velosync'`，健康检查失败、部署回滚。表结构则由容器自动建立。
+
+> ⚠️ **变量名易错点**：云托管开通 MySQL 后会默认注入一批变量，形如：
+> ```json
+> { "MYSQL_ADDRESS": "10.3.101.119:3306", "MYSQL_USERNAME": "root", "MYSQL_PASSWORD": "xxx" }
+> ```
+> 那是**模板的命名**，本项目代码并不读取它们（`settings.py` 读的是 `DB_*`）。
+> 而且 `MYSQL_ADDRESS` 把 **IP 与端口合在一起**，与本项目 `DB_HOST` / `DB_PORT` 分离的写法不同，
+> **必须拆开重填**，否则连不上库（会拿默认值 `127.0.0.1` 去连，报 Connection refused）。
 
 ### 3. 配置环境变量
 
-在服务的「版本配置 → 环境变量」中逐条填入（**这些是部署的关键**）：
+在服务的「高级设置 → 环境变量」中填入。**推荐直接用 JSON 模式整段替换**：
 
-```
-DJANGO_SECRET_KEY=<随机长字符串，务必换掉>
-DJANGO_DEBUG=0
-DJANGO_ALLOWED_HOSTS=*
-
-DB_ENGINE=mysql
-DB_NAME=velosync
-DB_USER=<云托管 MySQL 用户名>
-DB_PASSWORD=<云托管 MySQL 密码>
-DB_HOST=<云托管 MySQL 内网地址>
-DB_PORT=<云托管 MySQL 端口>
-
-CELERY_TASK_ALWAYS_EAGER=1
-
-WECHAT_MP_APP_ID=wxd12e39be6f29d81e
-WECHAT_MP_APP_SECRET=<你的小程序 AppSecret>
-
-TOKEN_ENCRYPTION_KEY=<Fernet key>
+```json
+{
+  "DJANGO_SECRET_KEY": "<随机长字符串，务必换掉>",
+  "DJANGO_DEBUG": "0",
+  "DJANGO_ALLOWED_HOSTS": "*",
+  "DB_ENGINE": "mysql",
+  "DB_NAME": "velosync",
+  "DB_USER": "root",
+  "DB_PASSWORD": "<云托管 MySQL 密码>",
+  "DB_HOST": "<云托管 MySQL 内网地址，不含端口>",
+  "DB_PORT": "3306",
+  "CELERY_TASK_ALWAYS_EAGER": "1",
+  "WECHAT_MP_APP_ID": "wxd12e39be6f29d81e",
+  "WECHAT_MP_APP_SECRET": "<你的小程序 AppSecret>",
+  "TOKEN_ENCRYPTION_KEY": "<Fernet key>"
+}
 ```
 
-关于后两项：
+> 云托管默认注入的 `MYSQL_*` / `COS_*` 变量**无需保留**——项目不读它们。
+
+关于两个需要自行生成的密钥：
 
 - **`DJANGO_SECRET_KEY`**：本地 `.env` 里那个 `dev-insecure-...` 绝不能用于生产。生成新的：
   ```bash
@@ -107,11 +145,22 @@ curl https://<你的云托管域名>/api/health/
 
 ### 7. 小程序端对接
 
+本项目的小程序用的是**普通 HTTPS 请求**（`utils/request.js` 里的 `wx.request`），
+因此走的是「登记合法域名」这条路，**不需要** `wx.cloud.callContainer`。
+
+> 云托管控制台会展示一段 `wx.cloud.callContainer({ config: { env }, ... })` 示例代码，
+> 那是「免域名内网调用」的另一种方式，用它可以不配域名，但**需要改造所有请求代码**、
+> 且必须在 `app.json` 中声明 `cloud: true`。本项目**不用它**，忽略该示例即可。
+
+对接步骤：
+
 1. 记下云托管分配的域名，形如 `velosync-api-xxx.ap-shanghai.run.tcloudbase.com`。
+   在服务详情的「域名地址」处可看到（本项目那个是 `django-xu8d-...` 之类）。
 2. 小程序后台 → **开发管理 → 开发设置 → 服务器域名 → request 合法域名**，添加：
    ```
    https://<你的云托管域名>
    ```
+   ⚠️ 必须是 `https://` 开头、**不带路径**、**不带端口**。
 3. 改小程序配置 `wx-frontend/config.js`：
    ```js
    baseUrl: "https://<你的云托管域名>/api",
