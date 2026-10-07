@@ -8,22 +8,24 @@
 
 ## ✨ 核心功能（已实现）
 
-| 模块             | 说明                                                                             |
-| -------------- | ------------------------------------------------------------------------------ |
-| 🔐 账号与授权       | JWT 登录/注册；平台 OAuth2 授权绑定（authorize/callback 全流程）、Token Fernet 加密存储、状态监控、解绑/重授权 |
-| 🆔 注册与快捷登录     | 账密注册（用户名/昵称/邮箱/密码确认 + 前后端校验）；微信 · QQ · 微博一键登录注册，同一身份自动复用账号                     |
-| 🕸 可视化管道       | React Flow 画布：源（蓝）/过滤器（琥珀）/目标（绿）三类节点，拖拽连线、节点配置面板、整体 PUT 保存、位置持久化               |
-| 📊 活动矩阵        | 活动 × 平台二维矩阵，✅已同步 / ⚠️待同步 / ❌失败 / —不适用，点击看详情、右键手动同步                             |
-| 📄 FIT 解析        | 上传 .fit 解析汇总指标；曲线支持**时间 / 距离双维度**切换；GPS 轨迹用**高德地图**回放；导入历史可查看/删除，按文件哈希去重入库   |
-| 🧠 智能去重        | ±5 秒时间窗口匹配 + FIT 哈希辅助校验，防止重复上传                                                 |
-| ⚙️ 规则引擎        | 按运动类型 / 距离区间 / 日期范围过滤，可组合                                                      |
-| ⚡ 实时进度         | SSE（EventSource）推送管道运行状态，节点边框实时变色（运行中闪烁/成功绿/失败红）                               |
-| 📈 仪表盘         | 活动总数、已同步、待同步、同步率，平台分布饼图、30 天趋势折线、最近同步表格                                        |
-| 📜 同步日志        | 表格 + 时间轴双视图，按级别/管道筛选                                                           |
-| ⌨️ 命令面板        | Ctrl/Cmd + K：跳转页面、搜索管道与活动、刷新数据                                                 |
-| 🖥 三栏工作台       | 左侧导航可折叠可拖拽调宽，右侧上下文面板随选中对象切换                                                    |
-| 🧩 插件化 Adapter | 平台适配器注册表：Mock 可完整跑通；iGPSPORT/Garmin/Strava/COROS 骨架，申请到凭证后实现接口即接入              |
-| 🧵 异步任务        | Celery 任务 + Beat 定时轮询（每 5 分钟）+ 失败指数退避重试；开发模式 EAGER 免 Redis                     |
+| 模块             | 说明                                                                                                                                                                                              |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🔐 账号与授权       | JWT 登录/注册；平台 OAuth2 授权绑定（authorize/callback 全流程）、未配置凭证时可按「演示身份」绑定、凭证状态可视化、Token Fernet 加密存储、状态监控、解绑/重授权；**退出登录**（侧栏底部 / 设置页 / 命令面板三处入口，二次确认，并清空 token 与全部查询缓存以防换账号串数据）                          |
+| 🆔 注册与快捷登录     | 账密注册（用户名/昵称/邮箱/密码确认 + 前后端校验）；微信 · QQ · 微博一键登录注册，同一身份自动复用账号                                                                                                                                      |
+| 📦 同步任务        | 四步向导：**数据来源**（FIT 文件 / iGPSPORT / 佳明 / Strava / COROS / 演示）→ **同步内容**（运动记录、汇总指标、采样点、GPS 轨迹、设备信息 / 个人资料、训练课程、路线、体重、睡眠、日常健康、装备、训练计划…）→ **目标账号**（多选）→ **时间范围与选项**。FIT 来源的时间范围受文件自身记录限制，支持**试运行预览** |
+| 🕸 执行图可视化      | 结构化配置自动展开为 React Flow 执行图（源 → 时间范围 → 目标账号），节点边框随 SSE 实时变色，运行统计（命中/同步/跳过/失败/纠偏点数）可视化                                                                                                             |
+| 📊 活动矩阵        | 活动 × 平台二维矩阵，✅已同步 / ⚠️待同步 / ❌失败 / —不适用，点击看详情、右键手动同步                                                                                                                                              |
+| 📄 FIT 解析      | 上传 .fit 解析汇总指标；**15 类指标全部预留**（无数据留空白图位），曲线支持**时间 / 距离双维度**与**多指标叠加**；GPS 轨迹用**高德地图**回放；导入历史可查看/删除，按文件哈希去重入库                                                                                     |
+| 🧠 智能去重        | ±5 秒时间窗口匹配 + FIT 哈希辅助校验，防止重复上传                                                                                                                                                                  |
+| ⚙️ 规则引擎        | 时间范围过滤、仅含 GPS、轨迹点上限抽稀、坐标纠偏、智能去重、冲突策略（跳过/覆盖/副本）、试运行                                                                                                                                              |
+| ⚡ 实时进度         | SSE（EventSource）推送同步任务运行状态，节点边框实时变色（运行中闪烁/成功绿/失败红），并推送执行统计                                                                                                                                      |
+| 📈 仪表盘         | 活动总数、已同步、待同步、同步率，平台分布饼图、30 天趋势折线、最近同步表格                                                                                                                                                         |
+| 📜 同步日志        | 表格 + 时间轴双视图，按级别/同步任务筛选                                                                                                                                                                          |
+| ⌨️ 命令面板        | Ctrl/Cmd + K：跳转页面、搜索同步任务与活动、刷新数据、退出登录                                                                                                                                                           |
+| 🖥 三栏工作台       | 左侧导航可折叠可拖拽调宽，右侧上下文面板随选中对象切换                                                                                                                                                                     |
+| 🧩 插件化 Adapter | 平台适配器注册表：Mock 可完整跑通；iGPSPORT/Garmin/Strava/COROS 骨架，申请到凭证后实现接口即接入                                                                                                                               |
+| 🧵 异步任务        | Celery 任务 + Beat 定时轮询（每 5 分钟）+ 失败指数退避重试；开发模式 EAGER 免 Redis                                                                                                                                      |
+| 📱 微信小程序端      | `wx-frontend/`：与 Web 端**功能对等**的原生小程序（12 页 / 5 tab）。微信一键登录（`code2session`，未配 AppID 自动降级演示身份）、Canvas 2D 手绘全部图表、`map` 组件轨迹回放、`wx.chooseMessageFile` 上传 FIT、短轮询替代 SSE、**三级兜底**完成第三方账号绑定             |
 
 ## 🚀 快速开始
 
@@ -54,7 +56,7 @@ python -m venv .venv
 
 pip install -r requirements.txt
 python manage.py migrate          # 建表到 MySQL velosync
-python manage.py seed_demo        # 演示数据：30 条活动 + 2 条管道
+python manage.py seed_demo        # 演示数据：30 条活动 + 2 条同步任务
 python manage.py runserver        # http://127.0.0.1:8000
 ```
 
@@ -66,15 +68,21 @@ python manage.py runserver        # http://127.0.0.1:8000
 cd frontend
 corepack enable                   # 启用 yarn（Node ≥ 16.10 自带，仅需一次）
 yarn install
-yarn dev                          # http://localhost:5173（/api 自动代理到 8000）
+yarn dev                          # http://localhost:5173
+                                  # /api、/admin、/static 均自动代理到后端 8000
 ```
+
+> 开发时 `http://localhost:5173/admin/` 与 `http://127.0.0.1:8000/admin/` 都能进 Django Admin。>   
+> （`/admin` 未代理时 Vite 会返回 index.html，前端路由匹配不到就回退到主页。）>   
+> 经 5173 代理登录后台时，后端需把 `http://localhost:5173` 加入 `CSRF_TRUSTED_ORIGINS`（已默认配置），>   
+> 否则 POST 登录表单会被 CSRF「Origin checking failed」拦下并返回 403。
 
 ### 3. 登录
 
-| 账号      | 密码           | 用途                        |
-| ------- | ------------ | ------------------------- |
-| `demo`  | `demo123456` | 前台工作台（含 30 条演示活动、2 条管道）   |
-| `admin` |              | Django Admin 后台 `/admin/` |
+| 账号      | 密码            | 用途                        |
+| ------- | ------------- | ------------------------- |
+| `demo`  | `demo123456`  | 前台工作台（含 30 条演示活动、2 条同步任务） |
+| `admin` | `admin123456` | Django Admin 后台 `/admin/` |
 
 ### 4. 启用 Redis + Celery 异步（可选）
 
@@ -88,25 +96,50 @@ docker compose up -d redis        # 只起 Redis 7（数据库用本地 MySQL，
 
 ```bash
 celery -A config worker -l info -P solo        # Windows 用 solo 池
-celery -A config beat -l info                  # 定时调度（自动轮询管道）
+celery -A config beat -l info                  # 定时调度（自动轮询同步任务）
 ```
+
+### 5. 启动小程序端（wx-frontend，可选）
+
+`frontend` 与 `wx-frontend` 是**同级的两个客户端**，共用同一后端，功能对等。
+
+1. 微信开发者工具 → **导入项目** → 目录选 `D:\Code\VeloSync\wx-frontend`；
+2. AppID 先选「测试号」即可跑通全部功能；
+3. 开发者工具「**详情 → 本地设置**」勾选 **「不校验合法域名、web-view、TLS 版本以及 HTTPS 证书」**；
+4. 后端保持 `http://127.0.0.1:8000` 运行，小程序 `config.js` 默认 `baseUrl: "http://127.0.0.1:8000/api"`。
+
+真机预览把 `baseUrl` 改成电脑内网 IP（如 `http://192.168.1.5:8000/api`），或直接在「我的 → 设置 → 接口地址」里运行时修改。  
+第三方账号绑定、图标说明、待补资料清单详见 **[`wx-frontend/README.md`](wx-frontend/README.md)**。
 
 ## 🎬 演示玩法
 
 1. 登录页可**注册**新账号，或点微信 / QQ 图标用**演示身份**一键登录（首次自动建号并绑定，再次使用同一身份直接登录）；
 2. 登录后进入**仪表盘**查看统计与趋势；
-3. 打开**管道**页 → 进入「演示回环（Mock 目标）」画布 → 点**运行管道**，观察节点边框随 SSE 实时变色，跑完 toast 提示执行结果；
-4. 到**活动矩阵**右键任一待同步/失败单元格 → 手动同步；
-5. **账号**页一键绑定「演示平台 (Mock)」体验授权流程；
-6. **FIT 解析**页上传 .fit 文件：切换**时间/距离**维度看曲线，点播放做**轨迹回放** —— 手上没文件就先跑
-   `python backend/tools/make_sample_fit.py`（想看回放效果可用
-   `python backend/tools/make_sample_fit.py tools/sample_ride_long.fit 3600` 生成 1 小时数据）；
-7. 任意页面按 **Ctrl/Cmd + K** 唤起命令面板。
+3. 打开**FIT 解析**页上传 `backend/tools/sample_ride.fit`（或 `make_sample_fit.py` 合成的样例）；
+4. 打开**同步任务**页 → 右上角「新建同步任务」→ 四步向导：
+   - 数据来源选 **FIT 文件 / 本地记录**（可指定某一份 FIT，或全部本地记录）；
+   - 同步内容勾选 运动记录 / 汇总指标 / 采样点 / GPS 轨迹 / 设备信息（其余项标「预留」）；
+   - 目标账号勾选已绑定的平台账号；
+   - 时间范围选 **文件完整范围**，选项保持默认（**坐标纠偏**与**智能去重**默认开启）；
+   - 点「试运行预览」可先看将同步多少条活动、纠偏多少个轨迹点，确认后「创建任务」。
+5. 在任务详情页点**运行任务**，左侧配置、右侧执行图与运行统计实时更新（SSE）；
+6. 到**活动矩阵**右键任一待同步/失败单元格 → 手动同步；
+7. **账号**页一键绑定「演示平台 (Mock)」体验授权流程；iGPSPORT / 佳明等未配置 OAuth 凭证的平台，     
+   会提示缺哪些凭证，并可点「以演示身份绑定」跑通全链路（详见「接入真实平台」）；
+8. **FIT 解析**页上传 .fit 文件：切换**时间/距离**维度看曲线（默认每个指标一行，也可改「叠加」     
+   把多个指标画在同一张图对比），点播放做**轨迹回放** —— 手上没文件就先跑     
+   `python backend/tools/make_sample_fit.py`（默认样例已写入全部预留字段；想看回放效果可用     
+   `python backend/tools/make_sample_fit.py tools/sample_ride_long.fit 3600` 生成 1 小时数据；     
+   加第三个参数 `basic` 可生成仅含基础字段的文件，用来看「无数据 → 空白图位」的效果）；
+9. 任意页面按 **Ctrl/Cmd + K** 唤起命令面板；面板里的「退出登录」可直接登出。
+10. 要退出当前账号，三个入口任选：**侧栏底部**的用户区（头像 + 昵称，右侧登出图标）、**设置页**的红色「退出登录」按钮、**命令面板**输入「退出登录」。      
+    三者都会先弹二次确认，确认后清除本地 JWT 并跳回登录页。
 
 ## 📁 项目结构
 
 ```
 VeloSync/
+├── .vscode/                    # 团队共享：settings（wxml/wxss 语言关联）/ extensions / tasks（自检与起服务）
 ├── docker-compose.yml          # MySQL + Redis
 ├── backend/
 │   ├── requirements.txt
@@ -115,36 +148,54 @@ VeloSync/
 │   └── apps/
 │       ├── accounts/           # JWT 登录注册 + 查询参数认证（SSE 用）
 │       ├── platforms/          # 平台/账号模型、Fernet 加密、OAuth 流程、适配器
-│       ├── pipelines/          # 管道/节点/连线/运行记录、执行引擎、过滤器、Celery 任务、SSE
+│       ├── pipelines/          # 同步任务/节点/连线/运行记录、规格注册表、执行引擎、试运行规划、过滤器、Celery 任务、SSE
 │       ├── activities/         # 活动/同步状态/FIT 详情、去重、坐标转换、FIT 解析
 │       ├── synclogs/           # 同步日志
 │       ├── dashboard/          # 仪表盘统计
 │       └── core/               # seed_demo 管理命令
 │   └── tools/                  # make_sample_fit.py：合成样例 FIT（无真实文件时验证用）
 └── frontend/
+    ├── public/                 # favicon.svg（品牌图标矢量源）/ favicon-16·32 / apple-touch-icon / logo-512
+    ├── tools/                  # make_brand_icons.cjs：从 favicon.svg 渲染各尺寸位图
     └── src/
-        ├── api/                # fetch 客户端（401 自动刷新）+ 类型 + React Query hooks
+        ├── api/                # fetch 客户端（401 自动刷新）+ 全局 QueryClient 单例 + 类型 + React Query hooks
         ├── stores/             # Zustand：认证 / UI 状态
-        ├── components/         # 三栏布局、命令面板、管道节点、状态图标、高德轨迹回放
+        ├── components/         # 三栏布局、命令面板、执行图节点、同步任务向导/表单、状态图标、高德轨迹回放、BrandMark 品牌标识
         ├── utils/              # 坐标转换(WGS-84↔GCJ-02)、高德加载器、格式化
-        └── pages/              # 登录 / 仪表盘 / 管道 / 编辑器 / 矩阵 / FIT 解析 / 账号 / 日志 / 设置
+        └── pages/              # 登录 / 仪表盘 / 同步任务 / 任务配置 / 矩阵 / FIT 解析 / 账号 / 日志 / 设置
+└── wx-frontend/                # 微信小程序端（原生 WXML/WXSS/JS，与 frontend 功能对等）
+    ├── app.json                # 12 页面 + 5 tabBar + 定位权限声明
+    ├── config.js               # 后端地址 / 平台官方小程序 appId / 官方 App 兜底链接
+    ├── styles/common.wxss      # 设计系统（与 Web 端同一套 token）
+    ├── utils/                  # 请求(401 刷新)、坐标纠偏、FIT 指标注册表、Canvas 图表、格式化
+    ├── components/sync-form/   # 四段式同步配置表单
+    ├── pages/                  # 登录 / 仪表盘 / 同步任务 / 向导 / 任务编辑 / 矩阵 / FIT / FIT详情 / 账号 / 日志 / 设置 / 我的
+    ├── assets/                 # 品牌图标（速度线 + 环形同步箭头）+ tabBar 图标
+    └── tools/                  # make_icons.py（生成图标）、check.js（静态自检）、api-smoke.js、chart-test.js、make_preview.js（生成静态预览页）
 ```
 
 ## 🔌 API 一览（OpenAPI：`/api/docs/`）
 
 ```
 POST /api/auth/login/ | refresh/ | register/      GET /api/auth/me/
-GET  /api/auth/social/providers/                  快捷登录方式（含 oauth/mock 模式）
+GET  /api/auth/social/providers/                  快捷登录方式（?channel=web|miniprogram，
+                                                  默认只返回 web；小程序专用项带 channel=miniprogram）
+GET  /api/auth/wx/miniprogram/                    小程序登录模式（GET）/ wx.login 一键登录（POST）
 POST /api/auth/social/login/                      第三方登录注册，直接返回 JWT
 GET  /api/auth/social/{provider}/authorize/       取授权地址（演示模式无地址）
 GET  /api/auth/social/{provider}/callback/        OAuth 回调 → 签发 JWT 回跳前端
 GET  /api/platforms/                              平台列表
 GET|DELETE /api/accounts/                         账号管理
-GET  /api/accounts/{platform}/authorize/          获取授权 URL
+GET  /api/accounts/{platform}/authorize/          获取授权 URL（未配置凭证时返回 400 + code=oauth_not_configured）
+POST /api/accounts/{platform}/demo-bind/          未配置凭证时以演示身份绑定（本地体验用）
 GET  /api/accounts/{platform}/callback/           OAuth 回调
-CRUD /api/pipelines/（PUT 整体保存 nodes+edges）   管道
+CRUD /api/pipelines/                             同步任务（PUT 支持画布 nodes+edges 或结构化配置，
+                                                 结构化配置会自动重建执行图）
+GET  /api/pipelines/sync-spec/                   规格目录：数据来源 / 同步内容 / 选项 / 可选账号与 FIT 记录
+POST /api/pipelines/sync-preview/                未保存配置的试运行预览（新建向导用）
+POST /api/pipelines/{id}/preview/                按当前或临时覆盖的配置试运行预览（不写入数据）
 POST /api/pipelines/{id}/run/                     执行
-GET  /api/pipelines/{id}/stream/?access_token=    SSE 实时进度
+GET  /api/pipelines/{id}/stream/?access_token=    SSE 实时进度（含执行统计 stats）
 GET  /api/activities/ | matrix/                   活动与矩阵
 POST /api/activities/upload-fit/                  上传并解析 FIT 文件（multipart）
 GET  /api/activities/fit-history/                 FIT 导入历史（轻量列表，不含采样点）
@@ -157,9 +208,70 @@ GET  /api/dashboard/stats/                        仪表盘统计
 
 ## 🛠 接入真实平台
 
-1. 在 Django Admin（或 seed 数据）中补充平台 `client_id / client_secret / authorize_url / token_url / api_base`；
-2. 在 `apps/platforms/adapters.py` 对应适配器中实现 `fetch_activities / download_fit / upload_fit / check_exists`；
-3. 绑定账号 → 搭建管道 → 运行。
+### 1. 先看平台凭证状态
+
+平台账号绑定需要各平台开放平台的 OAuth 凭证（`authorize_url` / `token_url` / `client_id` / `client_secret`）。  
+仓库里 **iGPSPORT / Garmin / Strava / COROS 的凭证是留空的**，所以在「账号管理」页点「绑定账号」会提示  
+「尚未配置 OAuth 凭证」。查看当前状态与各平台申请入口：
+
+
+```bash
+cd backend && ./.venv/Scripts/python.exe manage.py set_platform_oauth --list
+```
+
+| 平台 | 申请入口 |
+| --- | --- |
+| iGPSPORT | iGPSPORT APP Open Platform（www.igpsport.com/support/app/openapi，OAuth2.0，邮件申请 global@igpsport.com） |
+| Garmin | Garmin Connect Developer Program（developer.garmin.com） |
+| Strava | Strava API Settings（www.strava.com/settings/api） |
+| COROS | COROS 开放平台（open.coros.com） |
+
+> **iGPSPORT 申请材料已备好**：官方要求的 7 项开发者资料（应用名称 / Logo / 简介 / redirect_url /
+> callback_url / Company name / Official website）的逐项填法、Logo（120×120 PNG，已生成
+> `wx-frontend/assets/brand/logo-120.png`）、中英文简介文案、redirect/callback 的公网地址方案，
+> 以及可直接发送的邮件正文，见 **[`docs/igpsport-开放平台申请材料.md`](docs/igpsport-开放平台申请材料.md)**。
+> 官方**未要求**项目说明书、软著或营业执照，但个人开发者需如实说明主体性质。
+>
+> 即使拿不到开放平台权限也不影响使用：**FIT 文件导入链路已完整跑通**（见「FIT 解析说明」）。
+
+### 2-A. 还没有凭证 —— 用「演示身份」绑定（本地体验）
+
+在「账号管理」页点「绑定账号」后，会出现引导面板，点 **「以演示身份绑定」** 即可。
+后端会签发一个 `demo-token`，账号列表中标记为「演示身份」，用于跑通
+**绑定 → 新建同步任务 → 运行 → 看日志** 整条链路（平台侧不会收到真实请求，因此同步一定会失败并在日志里给出原因）。
+也可以用接口直接绑定：`POST /api/accounts/{platform}/demo-bind/`。
+
+### 2-B. 已拿到凭证 —— 写入平台数据
+
+**Django Admin**（`/admin/platforms/platform/`）里打开对应平台，在「OAuth 凭证」分组填写；或命令行写入：
+
+```bash
+cd backend
+./.venv/Scripts/python.exe manage.py set_platform_oauth strava \
+  --authorize-url https://www.strava.com/oauth/authorize \
+  --token-url    https://www.strava.com/oauth/token \
+  --api-base     https://www.strava.com/api/v3 \
+  --client-id    你的ClientID --client-secret 你的ClientSecret \
+  --scopes       read,activity:read_all,activity:write
+
+# 回退到"未配置"状态
+./.venv/Scripts/python.exe manage.py set_platform_oauth strava --clear
+```
+
+凭证齐备（`authorize_url` / `token_url` / `client_id` 三者都有）后，「绑定账号」会跳转平台真实授权页，
+授权回调写入加密 Token；此时 `demo-bind` 会被拒绝（返回 400），避免误用。
+
+### 3. 补充适配器与内容能力
+
+1. 在 `apps/platforms/adapters.py` 对应适配器中实现 `fetch_activities / download_fit / upload_fit / check_exists`（运动记录）；
+2. 账号类内容（个人资料 / 训练课程 / 路线 / 体重 / 睡眠 / 日常健康 / 装备 / 训练计划）按需实现
+   `fetch_content(key, since, until)` 与 `push_content(key, payload)`，并在 `CONTENT_SUPPORT` 中登记；
+   未实现的平台在运行时会记一条「已预留」日志并跳过，不会中断任务；
+3. 重新授权账号 → 新建同步任务 → 运行。
+
+**同步任务配置**（`apps/pipelines/spec.py` 是唯一事实来源，前端向导按它渲染）：
+数据来源 `SOURCE_SPECS`、同步内容 `CONTENT_SPECS`（按来源分组，`implemented: false` 即前端标「预留」）、
+同步选项 `OPTION_SPECS`（坐标纠偏 / 智能去重 / 冲突策略 / 仅含 GPS / 轨迹点上限 / 回填远端 ID / 遇错中止 / 试运行）。
 
 FIT 解析（fitparse）与 GCJ-02 ↔ WGS-84 坐标转换已内置（`apps/activities/fit_utils.py`、`coords.py`），供轨迹纠偏与元数据补全使用。
 
@@ -182,6 +294,83 @@ SOCIAL_REDIRECT_BASE_URL=https://your-domain.com
 - 凭证为空 → 接口返回 `mode: "mock"`，前端弹出演示身份框，提交后走同一套绑定逻辑；
 - 两种模式共用 `SocialAccount`（provider + openid 唯一），同一身份始终映射到同一账号；
 - 新增平台只需在 `settings.SOCIAL_AUTH_PROVIDERS` 注册 + 在 `apps/accounts/social.py` 实现换取逻辑，前端按钮由接口自动渲染。
+- **渠道隔离**：并非所有登录方式两端通用。`wechat_mp`（小程序 `wx.login` → `code2session`）只在微信小程序里拿得到 `code`，因此不属于 `SOCIAL_AUTH_PROVIDERS`，被登记在 `social.MINIPROGRAM_ONLY` 中。`GET /api/auth/social/providers/` **默认只下发 `channel: "web"` 的项**，小程序端显式传 `?channel=miniprogram` 才会附上 `wechat_mp`。网页端即便直接调用也会收到可读的 400 提示（`wechat_mp 仅支持微信小程序端调用…`），而不是渲染出一个点了必然失败的按钮。
+
+## 📱 微信小程序端（wx-frontend）
+
+`wx-frontend/` 与 `frontend/` 同级，是**同一后端的第二个客户端**，功能对等，但受微信平台能力限制，部分实现方式不同：
+
+| 能力 | Web 端 | 小程序端 |
+| --- | --- | --- |
+| 实时进度 | SSE / EventSource | **短轮询** `pollRun()`（1.2s × 30 次，小程序不支持 SSE） |
+| 图表 | Recharts | **Canvas 2D** 手绘（`utils/chart.js`：分图 / 叠加 / 饼图 / 趋势） |
+| 轨迹回放 | 高德 JS API | 内置 **`map` 组件** + polyline（坐标同为 GCJ-02） |
+| 上传 FIT | `<input type=file>` | **`wx.chooseMessageFile`** 从聊天记录选择 |
+| 微信登录 | 开放平台网站应用 OAuth | **`wx.login()` → `code2session`**（未配 AppID 自动降级演示身份） |
+
+> 小程序端**只保留微信登录**（不含 QQ / 微博入口），登录后「我的」页展示微信真实头像与 OpenID / UnionID。
+> `/api/auth/me/` 已扩展返回 `avatar` 与 `social[]`（provider / openid / unionid / avatar_url / bound_at），
+> 登录响应同样带齐，无需二次请求。
+
+### 第三方账号绑定：三级兜底
+
+微信小程序**不允许直接唤起第三方 App**（`garminconnect://`、`strava://` 在小程序内无效），所以按顺序降级：
+
+1. **跳官方小程序** —— `wx.navigateToMiniProgram`（需在 `config.js` 填对方小程序原始 AppID）；
+2. **复制链接开 App** —— `wx.setClipboardData` 复制官方链接 → 浏览器唤起官方 App；
+3. **演示身份** —— `POST /api/platforms/{id}/demo-bind/`，本地未配 OAuth 凭证时一键跑通。
+
+### 待补资料（缺省会自动降级，不阻塞本地开发）
+
+| 项 | 填到哪里 | 状态 |
+| --- | --- | --- |
+| 小程序 AppID | `wx-frontend/project.config.json → appid` | ✅ 已配置 |
+| 小程序 AppID + AppSecret | `backend/.env → WECHAT_MP_APP_ID` / `WECHAT_MP_APP_SECRET` | ✅ 已配置 |
+| 各平台官方小程序 AppID | `wx-frontend/config.js → officialMiniPrograms` | ⬜ 待补 |
+| 各平台 OAuth 凭证 | Django Admin → 平台 → 对应字段 | ⬜ 待补 |
+| 微信开放平台网站应用（网页扫码登录用） | `backend/.env → WECHAT_APP_ID` / `WECHAT_APP_SECRET` | ⬜ 待补（需企业主体） |
+
+小程序端细节、图标生成、自测脚本与真机调试，详见 **[`wx-frontend/README.md`](wx-frontend/README.md)**。
+
+### 怎么查看小程序界面
+
+小程序必须跑在微信运行时里，**浏览器和 VS Code 都不能真正渲染它**，只能用[微信开发者工具](https://developers.weixin.qq.com/miniprogram/dev/devtools/download.html)（本机尚未安装）。
+
+但「看界面」不必装工具：
+
+```bash
+cd wx-frontend && node tools/make_preview.js    # 需后端已启动
+```
+
+生成 `preview/index.html` —— **单文件、自包含**的静态预览。它用真实 WXML + 真实 WXSS 渲染，页面数据由一份最小 `wx` 垫片在 Node 里真实执行各页面的 `onLoad`/`onShow` 从后端取回；12 个页面一屏切换，含模拟状态栏 / 导航栏 / tabBar；图表由小程序自己的 `utils/chart.js` 按真实采样数据补绘。浏览器或 VS Code 的 Live Preview 均可直接打开。
+
+> 定位是**看视觉与信息结构**的静态快照，不能替代开发者工具的真机调试（点击无效、输入只读）。
+
+VS Code 在本仓库里承担的是「写 + 调」：`.vscode/` 已预置 WXML/WXSS 语言关联、推荐的 WXML 扩展，以及「静态自检 / API 冒烟 / 图表测试 / 生成预览 / 启动前后端」等任务（`Ctrl+Shift+P` → Tasks: Run Task）。
+
+## 🎨 品牌图标
+
+设计语言 **「速度线 + 环形同步箭头」**：靛蓝对角渐变圆角方块（`#818cf8 → #4338ca`）+ 白色环形双向同步箭头 + 内部三条长度递减的圆头速度线（速度 → 斜向流线，同步 → 环抱双向箭头）。主色 `#4f46e5`。
+
+三个载体共用同一套几何参数（按 64×64 归一化）：
+
+| 载体 | 文件 | 说明 |
+| --- | --- | --- |
+| Web 界面 | `frontend/src/components/BrandMark.tsx` | 内联 SVG 组件，用于侧栏顶部与登录页 |
+| Web favicon | `frontend/public/favicon.svg` | 浏览器标签页 / 书签图标（位图副本由脚本生成） |
+| 小程序 | `wx-frontend/assets/brand/logo-*.png` | 512 / 144 / 96 三档 |
+
+要调整图形，改 `frontend/public/favicon.svg` 与 `BrandMark.tsx` 两处几何参数，然后重新生成位图：
+
+```bash
+# Web：从 favicon.svg 渲染 favicon-16 / favicon-32 / apple-touch-icon / logo-512
+cd frontend && NODE_PATH=<装了 @resvg/resvg-js 的 node_modules> node tools/make_brand_icons.cjs
+
+# 小程序：Pillow 生成品牌图标 + tabBar 图标
+cd wx-frontend && python tools/make_icons.py
+```
+
+> 注意：Pillow 的 `draw.arc()` 线宽是**向内**扩展的，所以小程序版环的外沿等于半径。SVG 的 `stroke` 以路径为中心线，路径半径需写「外沿半径 − 描边一半」。两边对不上时先查这一点。
 
 ## 📄 FIT 解析说明
 
@@ -196,19 +385,35 @@ curl -X POST http://127.0.0.1:8000/api/activities/upload-fit/ \
 
 | 字段 | 内容 |
 | --- | --- |
-| `summary` | 距离 / 时长 / 爬升下降 / 卡路里 / 平均·最大心率 / 平均·最大功率 / NP / 踏频 / 速度 |
-| `samples` | 采样序列（时间、累计距离、速度、心率、功率、踏频、海拔、经纬度），上限 30000 点（≈8 小时 1Hz，实际等于全量保留） |
+| `summary` | 距离 / 时长 / 爬升下降 / 卡路里 / 平均·最大心率 / 平均·最大功率 / NP / 踏频 / 速度；另含 `metrics`（**全部 15 个指标槽位的统计**）与 `available_metrics`（本文件实际含哪些） |
+| `samples` | 采样序列（时间、累计距离 + 下表各指标 + 经纬度），上限 30000 点（≈8 小时 1Hz，实际等于全量保留）；文件里没有的指标键会被剔除，避免 JSON 里塞满 null |
 | `track` | GPS 轨迹 `[经度, 纬度]`，上限 30000 点，与采样同源但独立保留全部含 GPS 的点 |
 | `device` | 设备厂商 / 序列号（来自 file_id） |
 
-### 双维度曲线
+### 指标图表：预留全部模块 + 分图 / 叠加
 
-FIT 解析页顶部可切换横轴：**按时间**（X 轴为运动时长，看节奏与心率漂移）或**按距离**
-（X 轴为累计里程，方便对比同一段路的功率/海拔表现）。心率·功率图与速度·海拔图同步切换，
-鼠标移到曲线上会同步定位地图上的当前位置。
+后端注册表（`apps/activities/fit_utils.py` 的 `METRIC_SPEC`）预留了 FIT 常见的 15 类采样指标，
+前端注册表（`frontend/src/utils/fitMetrics.ts`）与之**一一对应**：
 
-累计距离优先取设备记录的 `distance`；设备不写时按相邻 GPS 点球面距离（Haversine）累加，
-保证 X 轴始终有值且单调不减。
+| 分组 | 指标 |
+| --- | --- |
+| 基础 | 心率 bpm、功率 W、踏频 rpm、速度 km/h、海拔 m、坡度 %、温度 °C、累计消耗 kcal |
+| 骑行进阶 | 扭矩效率 %、踩踏平顺度 %、累计做功 W |
+| 跑步姿态 | 垂直振幅 mm、触地时间 ms、步幅 mm |
+| 生理 | 肌氧饱和度 % |
+
+展示规则：
+
+- **分图模式（默认）**：每个指标**各占一行**（心率、速度、踏频等地位相同），单图带平均值参考线，
+  标题右侧标注平均 / 峰值；
+- **叠加模式**：勾选任意多个指标叠到一张图里，每项一条独立纵轴（左侧第一项、右侧第二项，
+  其余隐藏刻度但比例正确），适合看心率与功率的相关性；
+- **无数据也保留图位**：文件里没记录的指标画成空白图并标注「预留 · 无数据」，而不是隐藏卡片；
+  不想看可以用「显示无数据指标」开关关掉。
+
+横轴可切换 **按时间**（看节奏与心率漂移）或 **按距离**（对比同一段路的表现），全部图表同步切换；
+鼠标移到曲线上会同步定位地图上的当前位置。累计距离优先取设备记录的 `distance`，设备不写时按相邻
+GPS 点球面距离（Haversine）累加，保证 X 轴始终有值且单调不减。
 
 ### 导入历史与删除
 
@@ -251,8 +456,9 @@ Key 在[高德控制台](https://console.amap.com/dev/key/app)申请，服务平
 - fitparse 已处理时间与缩放，但**坐标是半圆值、距离是米、速度是 m/s**，解析时统一换算成度 / km / km/h；
 - session 缺字段时（很多码表不写全）从采样点推算：爬升按海拔正差累积、NP 按 30 秒移动平均四次方均值；
 - 入库去重：先按文件 SHA256 匹配，再按 ±5 秒开始时间窗匹配，都没有才新建活动并初始化各平台同步状态；
-- 手上没有真实文件时：`python backend/tools/make_sample_fit.py [输出路径] [点数]` 会合成一份合规样例，
-  例如 `python backend/tools/make_sample_fit.py tools/sample_ride_long.fit 3600` 生成 1 小时骑行数据用于测试回放；
+- 手上没有真实文件时：`python backend/tools/make_sample_fit.py [输出路径] [点数] [basic]` 会合成一份
+  合规样例，例如 `python backend/tools/make_sample_fit.py tools/sample_ride_long.fit 3600` 生成 1 小时
+  骑行数据用于测试回放；末尾加 `basic` 则只写基础字段（用于验证空白图位）；
 - 采样点与轨迹点上限均为 30000，超出才等间隔抽稀（`summary.downsampled` 会标记为 `true`）。
 
 ## ⚠️ 已知限制（对应设计书 Phase 7 持续迭代）

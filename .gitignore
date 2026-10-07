@@ -13,13 +13,22 @@ backend/.env
 # Node
 node_modules/
 frontend/dist/
+
+# 小程序静态预览产物（由 wx-frontend/tools/make_preview.js 生成）
+wx-frontend/preview/
+
 *.local
 
 # IDE / 系统
 .idea/
-.vscode/
 .DS_Store
 Thumbs.db
+
+# VS Code：团队共享 settings / extensions / tasks，其余（个人状态、缓存）不进库
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
 
 # WorkBuddy 本地工作区数据（对话记忆与工作日志，不进版本库）
 .workbuddy/
