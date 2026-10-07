@@ -32,18 +32,31 @@ PROVIDER_META = {
     "weibo": {"name": "微博", "color": "#E6162D", "icon": "weibo"},
 }
 
+# 仅小程序端可用的登录方式：网页端无法拿到 wx.login 的 code，故不属于 SOCIAL_AUTH_PROVIDERS。
+# 显式登记在此，命中时给出可读的提示，而不是含糊地报「不支持的第三方平台」。
+MINIPROGRAM_ONLY = {"wechat_mp"}
+
 TIMEOUT = 8
 
 
 def _config(provider: str) -> dict:
+    if provider in MINIPROGRAM_ONLY:
+        raise SocialError(f"{provider} 仅支持微信小程序端调用，网页端请使用常规微信登录")
     cfg = getattr(settings, "SOCIAL_AUTH_PROVIDERS", {}).get(provider)
     if cfg is None:
         raise SocialError(f"不支持的第三方平台：{provider}")
     return cfg
 
 
-def list_providers() -> list[dict]:
-    """供前端渲染快捷登录按钮：区分 oauth / mock 模式"""
+def list_providers(channel: str = "") -> list[dict]:
+    """供前端渲染快捷登录按钮：区分 oauth / mock 模式
+
+    `channel` 标记该登录方式归属的前端形态：
+    - `web`         —— 网页端可用（扫码 OAuth / 演示身份），来自 `SOCIAL_AUTH_PROVIDERS`
+    - `miniprogram` —— 仅微信小程序可用（wx.login → code2session），Web 端须过滤掉
+
+    可选按 `channel` 过滤：`list_providers("web")`。
+    """
     items = []
     for code, cfg in getattr(settings, "SOCIAL_AUTH_PROVIDERS", {}).items():
         enabled = bool(cfg.get("app_id") and cfg.get("app_secret"))
@@ -56,8 +69,11 @@ def list_providers() -> list[dict]:
                 "icon": meta.get("icon", code),
                 "enabled": enabled,
                 "mode": "oauth" if enabled else "mock",
+                "channel": "web",
             }
         )
+    if channel:
+        items = [it for it in items if it["channel"] == channel]
     return items
 
 
@@ -215,6 +231,64 @@ def mock_profile(provider: str, identity: str = "") -> dict:
     }
 
 
+# ---------------- 微信小程序登录（wx.login → code2session） ----------------
+
+
+def miniprogram_enabled() -> bool:
+    """小程序 AppID / AppSecret 是否已配置"""
+    cfg = getattr(settings, "WECHAT_MINIPROGRAM", {}) or {}
+    return bool(cfg.get("app_id") and cfg.get("app_secret"))
+
+
+def _jscode2session(code: str) -> dict:
+    cfg = getattr(settings, "WECHAT_MINIPROGRAM", {}) or {}
+    data = _http_json(
+        "https://api.weixin.qq.com/sns/jscode2session?"
+        f"appid={cfg['app_id']}&secret={cfg['app_secret']}"
+        f"&js_code={urllib.parse.quote(code)}&grant_type=authorization_code"
+    )
+    if not isinstance(data, dict) or data.get("errcode"):
+        raise SocialError(
+            f"微信小程序登录失败：{(data or {}).get('errmsg') or data}"
+        )
+    if not data.get("openid"):
+        raise SocialError("微信小程序未返回 openid")
+    return data
+
+
+def miniprogram_profile(
+    code: str, nickname: str = "", avatar: str = "", identity: str = ""
+) -> dict:
+    """小程序登录 → 统一 profile。
+
+    - 已配置小程序凭证：用 wx.login 的 code 走 code2session 换真实 openid（可拿到 unionid）
+    - 未配置：以客户端持久化的稳定 device id（identity）派生演示 openid，本地也能跑通
+    """
+    if not miniprogram_enabled():
+        seed_src = (identity or code or "").strip()
+        if not seed_src:
+            raise SocialError("缺少登录凭证")
+        seed = f"wechat_mp:{seed_src[:64]}"
+        return {
+            "openid": "mock-wechat-mp-" + hashlib.sha256(seed.encode()).hexdigest()[:16],
+            "unionid": "",
+            "nickname": (nickname or "小程序用户").strip()[:32],
+            "avatar_url": avatar or "",
+            "raw": {"mock": True, "channel": "miniprogram"},
+        }
+
+    if not code:
+        raise SocialError("缺少 wx.login 返回的 code")
+    data = _jscode2session(code)
+    return {
+        "openid": data.get("openid", ""),
+        "unionid": data.get("unionid", ""),
+        "nickname": (nickname or "微信用户").strip()[:32],
+        "avatar_url": avatar or "",
+        "raw": {"channel": "miniprogram", "has_session_key": bool(data.get("session_key"))},
+    }
+
+
 def get_or_create_user(provider: str, profile: dict) -> tuple[User, bool]:
     """按 (provider, openid) 查找绑定；不存在则自动注册新账号并绑定"""
     openid = profile.get("openid") or ""
@@ -224,6 +298,13 @@ def get_or_create_user(provider: str, profile: dict) -> tuple[User, bool]:
     social = (
         SocialAccount.objects.filter(provider=provider, openid=openid).select_related("user").first()
     )
+    if social is None and profile.get("unionid"):
+        # 同一微信开放平台账号下的 UnionID 一致：网页扫码登录与小程序登录可复用同一账号
+        social = (
+            SocialAccount.objects.filter(unionid=profile["unionid"])
+            .select_related("user")
+            .first()
+        )
     if social is not None:
         changed = False
         for field, key in (("nickname", "nickname"), ("avatar_url", "avatar_url")):

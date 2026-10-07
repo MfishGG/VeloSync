@@ -9,6 +9,7 @@ from .views import (
     SocialCallbackView,
     SocialLoginView,
     SocialProvidersView,
+    WxMiniProgramLoginView,
 )
 
 urlpatterns = [
@@ -16,6 +17,8 @@ urlpatterns = [
     path("refresh/", TokenRefreshView.as_view(), name="auth-refresh"),
     path("register/", RegisterView.as_view(), name="auth-register"),
     path("me/", MeView.as_view(), name="auth-me"),
+    # 微信小程序一键登录（wx.login → code2session）
+    path("wx/miniprogram/", WxMiniProgramLoginView.as_view(), name="wx-miniprogram-login"),
     # 第三方快捷登录（微信 / QQ / 微博）
     path("social/providers/", SocialProvidersView.as_view(), name="social-providers"),
     path("social/login/", SocialLoginView.as_view(), name="social-login"),

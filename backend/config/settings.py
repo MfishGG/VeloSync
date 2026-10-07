@@ -104,6 +104,13 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
+# ---------- Django Admin 登录跳转 ----------
+# 默认的 /accounts/profile/ 在本项目里是前端路由（React 的 /accounts），
+# 直接访问会被前端兜底路由送回主页，所以统一指到 admin 自身。
+LOGIN_URL = "/admin/login/"
+LOGIN_REDIRECT_URL = "/admin/"
+LOGOUT_REDIRECT_URL = "/admin/login/"
+
 # ---------- 国际化 ----------
 LANGUAGE_CODE = "zh-hans"
 TIME_ZONE = "Asia/Shanghai"
@@ -138,6 +145,18 @@ SIMPLE_JWT = {
 CORS_ALLOWED_ORIGINS = [
     o.strip()
     for o in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+    if o.strip()
+]
+
+# ---------- CSRF ----------
+# 前端 dev server(5173) 会把 /admin 代理到后端，浏览器带的 Origin 仍是 5173，
+# 必须在此登记，否则 Django Admin 登录 POST 会 403 “Origin checking failed”。
+CSRF_TRUSTED_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "CSRF_TRUSTED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000",
+    ).split(",")
     if o.strip()
 ]
 
@@ -182,6 +201,15 @@ SOCIAL_AUTH_PROVIDERS = {
 }
 # 第三方回调的后端基址（真实 OAuth 时须为平台登记的公网域名）
 SOCIAL_REDIRECT_BASE_URL = os.getenv("SOCIAL_REDIRECT_BASE_URL", "http://127.0.0.1:8000")
+
+# ---------- 微信小程序登录 ----------
+# 小程序用 wx.login() 拿 code，后端用 code2session 换 openid。
+# 两个都留空时自动降级为「演示身份」登录（用客户端提供的稳定 device id 生成 openid），
+# 便于在没有小程序 AppID 的情况下先跑通整条链路。
+WECHAT_MINIPROGRAM = {
+    "app_id": os.getenv("WECHAT_MP_APP_ID", ""),
+    "app_secret": os.getenv("WECHAT_MP_APP_SECRET", ""),
+}
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "VeloSync API",
