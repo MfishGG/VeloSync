@@ -1,0 +1,27 @@
+# 统一换行符，避免 Windows 上 checkout 出来的脚本在 Linux 容器里跑不起来
+#
+# 背景：容器入口脚本 docker-entrypoint.sh 若被检出为 CRLF，shebang 会变成
+# "#!/bin/sh\r"，Linux 内核找不到解释器，报 exec format error。
+# 这类问题只在容器里复现、本地完全正常，因此必须在这里锁死。
+
+# Shell 脚本必须 LF
+*.sh text eol=lf
+
+# Dockerfile / compose 必须 LF
+Dockerfile text eol=lf
+*.dockerfile text eol=lf
+docker-compose*.yml text eol=lf
+
+# Python / 配置按平台默认
+*.py text
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text
+
+# 二进制资源不要做换行转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
