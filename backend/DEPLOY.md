@@ -66,10 +66,15 @@
 
 控制台 → **云托管 → MySQL**（或「云数据库」）→ 新建实例，记录以下四项：
 
-- 内网地址（形如 `sh-xxx.sql.tencentcdb.com`，或内网 IP 如 `10.3.101.119`）
+- 内网地址（形如 `sh-xxx.sql.tencentcdb.com`，或内网 IP 如 `10.3.101.116`）
 - 端口（通常 `3306`）
 - 用户名（通常 `root`）
 - 密码
+
+> ⚠️ **内网 IP 每次重开都会变**。销毁数据库后重新开通，分配到的内网地址**不是原来那个**
+> （实测：5.7 是 `10.3.101.119`，重开 8.0 后变成 `10.3.101.116`）。
+> 所以换实例后**务必回「环境变量」把 `DB_HOST` 改成新地址** —— 忘了改的典型症状是
+> 容器日志里报连接超时，而你会以为「地址没变，是别的问题」。
 
 同时创建一个库：`velosync`（字符集选 `utf8mb4`）：
 
@@ -84,7 +89,7 @@ CREATE DATABASE IF NOT EXISTS velosync
 
 > ⚠️ **变量名易错点**：云托管开通 MySQL 后会默认注入一批变量，形如：
 > ```json
-> { "MYSQL_ADDRESS": "10.3.101.119:3306", "MYSQL_USERNAME": "root", "MYSQL_PASSWORD": "xxx" }
+> { "MYSQL_ADDRESS": "10.3.101.116:3306", "MYSQL_USERNAME": "root", "MYSQL_PASSWORD": "xxx" }
 > ```
 > 那是**模板的命名**，本项目代码并不读取它们（`settings.py` 读的是 `DB_*`）。
 > 而且 `MYSQL_ADDRESS` 把 **IP 与端口合在一起**，与本项目 `DB_HOST` / `DB_PORT` 分离的写法不同，
@@ -221,7 +226,7 @@ curl https://<你的云托管域名>/api/health/
 | # | 检查项 | 正确值 | 常见错误 |
 |---|---|---|---|
 | 1 | `DB_ENGINE` | `mysql` | 没设 → 回落 sqlite，虽然能起来但数据重启即丢 |
-| 2 | `DB_HOST` | 云 MySQL 的**内网地址**，如 `10.3.101.119` | ❌ 填成 `10.3.101.119:3306`（端口混进来了）<br>❌ 直接复制了 `MYSQL_ADDRESS` 整个值 |
+| 2 | `DB_HOST` | 云 MySQL 的**内网地址**，如 `10.3.101.116` | ❌ 填成 `10.3.101.116:3306`（端口混进来了）<br>❌ 直接复制了 `MYSQL_ADDRESS` 整个值 |
 | 3 | `DB_PORT` | `3306` | 忘了单独设 |
 | 4 | `DB_NAME` | `velosync` | 库**没手动创建** → `Unknown database` |
 | 5 | `DB_USER` / `DB_PASSWORD` | 云 MySQL 的账号密码 | 用了 `MYSQL_USERNAME`/`MYSQL_PASSWORD` 这类模板变量名（本项目不读） |

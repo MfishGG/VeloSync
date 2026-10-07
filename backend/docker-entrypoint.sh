@@ -110,6 +110,7 @@ else
   echo "[entrypoint] <<< 迁移失败！(退出码 $?)"
   echo "[entrypoint][提示] 常见原因："
   echo "[entrypoint][提示]   ① DB_HOST/DB_PORT 没填或填错（云数据库是内网地址，不含端口）"
+  echo "[entrypoint][提示]      —— 注意：销毁重开数据库后内网 IP 会变，务必同步更新 DB_HOST"
   echo "[entrypoint][提示]   ② 数据库 '${DB_NAME:-velosync}' 还没手动创建（Django 只建表不建库）"
   echo "[entrypoint][提示]   ③ 账号密码不对，或云托管未放行该 MySQL 实例"
   echo "[entrypoint][提示] 服务仍会启动，可访问 /api/health/ 查看具体错误。"
