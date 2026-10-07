@@ -44,6 +44,62 @@ if [ -n "${MYSQL_ADDRESS:-}" ] && [ -z "${DB_HOST:-}" ]; then
   echo "[entrypoint][错误] 且 MYSQL_ADDRESS 是「IP:端口」合体，必须拆成 DB_HOST=<IP> 和 DB_PORT=<端口>。"
 fi
 
+# ---------- 0.5 数据库版本预检 ----------
+# Django 5.1 的 MySQL 后端要求 8.0.11+。云托管默认给的可能是 5.7，
+# 若不提前拦下，等到 migrate 时会抛一长串 traceback，最后一行才是
+# "MySQL 8.0.11 or later is required (found 5.7.x)" —— 容易被淹没。
+# 这里用一条 SQL 先探版本，命中就给出可操作的结论并直接退出（不必再跑 migration）。
+if [ "${DB_ENGINE:-}" = "mysql" ]; then
+  echo "[entrypoint] >>> 预检数据库版本 ..."
+  DB_VER="$(python - <<'PYEOF' 2>/dev/null || true
+import os, sys
+try:
+    import pymysql
+    conn = pymysql.connect(
+        host=os.getenv("DB_HOST", "127.0.0.1"),
+        port=int(os.getenv("DB_PORT", "3306")),
+        user=os.getenv("DB_USER", "velosync"),
+        password=os.getenv("DB_PASSWORD", ""),
+        connect_timeout=8,
+    )
+    with conn.cursor() as cur:
+        cur.execute("SELECT VERSION()")
+        print(cur.fetchone()[0])
+    conn.close()
+except Exception:
+    sys.exit(0)
+PYEOF
+)"
+  if [ -n "${DB_VER}" ]; then
+    echo "[entrypoint] 数据库版本：${DB_VER}"
+    # 取出主次版本号，与 Django 要求的 8.0.11 比较
+    case "${DB_VER}" in
+      5.*|4.*|3.*|1.*|2.*)
+        echo ""
+        echo "[entrypoint][错误] ================================================"
+        echo "[entrypoint][错误] 数据库版本过低：${DB_VER}"
+        echo "[entrypoint][错误] Django 5.1 要求 MySQL 8.0.11 或更高，当前是 ${DB_VER}。"
+        echo "[entrypoint][错误]"
+        echo "[entrypoint][错误] 好消息：连接配置（DB_HOST/DB_PORT/账号密码）是对的，"
+        echo "[entrypoint][错误] 否则根本读不到版本号。问题只在数据库版本。"
+        echo "[entrypoint][错误]"
+        echo "[entrypoint][错误] 解法：微信云托管「不支持 5.7 原地升级到 8.0」，"
+        echo "[entrypoint][错误]       需在控制台 MySQL 页面点右上角「销毁数据库」，"
+        echo "[entrypoint][错误]       重新开通时版本选 8.0，然后重建 velosync 库。"
+        echo "[entrypoint][错误]       详见 backend/DEPLOY.md「常见问题」。"
+        echo "[entrypoint][错误] ================================================"
+        echo ""
+        echo "[entrypoint] gunicorn 仍会启动，可访问 /api/health/ 确认诊断信息。"
+        ;;
+      *)
+        echo "[entrypoint] 版本满足要求（>= 8.0）。"
+        ;;
+    esac
+  else
+    echo "[entrypoint][警告] 无法读取数据库版本（可能连不上）。继续尝试迁移，失败时见下方提示。"
+  fi
+fi
+
 # ---------- 1. 迁移（失败不阻断启动，只记录） ----------
 echo "[entrypoint] >>> 执行数据库迁移 ..."
 if python manage.py migrate --noinput; then

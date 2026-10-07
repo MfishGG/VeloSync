@@ -13,10 +13,14 @@
 | 微信云托管已开通 | 你已完成 |
 | 代码在 GitHub | 仓库：`git@github.com:MfishGG/VeloSync.git`，分支 `master` |
 | 后端已容器化 | 仓库内已有 `backend/Dockerfile`（本次新增），容器监听 **80** 端口 |
-| 数据库 | 用云托管自带的 MySQL（控制台一键开通） |
+| 数据库 | 用云托管自带的 MySQL（控制台一键开通）**版本必须选 8.0** |
 
 > **不需要** Redis：项目 `CELERY_TASK_ALWAYS_EAGER` 默认 `1`（任务同步执行），容器进程内完成，无需 broker。
 > **不需要**对象存储：当前无持久化上传文件（FIT 解析后即入库）。
+
+> ⚠️ **MySQL 必须选 8.0**。Django 5.1 的 MySQL 后端硬性要求 **8.0.11+**，
+> 用云托管默认的 5.7 会在启动时报 `NotSupportedError: MySQL 8.0.11 or later is required`。
+> 且云托管**不支持 5.7 原地升级到 8.0**，只能销毁后重新开通 —— 所以第一次就选对，别事后返工。
 
 ---
 
@@ -255,6 +259,54 @@ CREATE DATABASE IF NOT EXISTS velosync
 
 `config` 段是**容器实际读到的值**（不含密码，只回显 `password_set`），
 一眼就能看出「我设了变量但容器没读到」这类问题。`hint` 是翻译过的中文建议。
+
+**Q：报 `django.db.utils.NotSupportedError: MySQL 8.0.11 or later is required (found 5.7.18)`？**
+
+**这是「数据库连通了，但版本太低」**——说明前面那些连接配置（`DB_HOST` / `DB_PORT` / 账号密码）**全都是对的**，
+只是云托管开的 MySQL 是 **5.7**，而 Django 5.1 硬性要求 **8.0.11+**。
+
+> 别去改 Django 版本绕它。降级到 Django 4.2 只是把问题推迟 —— 官方对 5.7 的支持已进入尾声，
+> 而且 5.7 缺 JSON 索引、CTE、窗口函数等能力，项目后续用得上。
+
+**正确解法：把 MySQL 换成 8.0。**
+
+⚠️ 官方明确说明（[微信云托管 MySQL 文档](https://developers.weixin.qq.com/miniprogram/dev/wxcloudservice/wxcloudrun/src/guide/mysql/)）：
+
+> **不支持从 MySQL 5.7 原地升级到 MySQL 8.0，需要注销后重新开通。**
+
+所以操作是「销毁 + 重开」，不是「升级」。好在你现在是**全新部署、库里没有业务数据**，销毁无损失。
+
+**操作步骤：**
+
+1. 云托管控制台 → 左侧 **MySQL**。
+2. 页面**右上角** → **销毁数据库**（若有二次确认，按提示输入密码确认）。
+3. 销毁完成后重新进入 MySQL 页面 → 会再次弹出**开通弹窗** →
+   这次**版本选 `8.0`**（弹窗里就有版本选项，5.7 / 8.0 二选一）。
+4. 设置数据库密码 → 确定。开通需几分钟。
+5. 开通后新建库（见上面第 2 节，或用「数据库管理」Web 控制台执行）：
+
+   ```sql
+   CREATE DATABASE IF NOT EXISTS velosync
+     DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+   ```
+
+6. **关键：连接信息会变。** 重新开通后内网地址可能不同，回到服务 →
+   「高级设置 → 环境变量」，按新的实例信息更新 `DB_HOST`（**不带端口**）、`DB_PORT`、`DB_PASSWORD`。
+   云托管的 MySQL 页面会显示内网地址，形如 `10.3.101.xxx:3306` —— **记得把端口拆出来**单独填 `DB_PORT`。
+7. 重新部署。
+
+部署成功后 `/api/health/` 应返回：
+
+```json
+{"status": "ok", "database": "ok", "config": {...}}
+```
+
+> **补充说明 1**：MySQL 8.0 开通后**不支持修改大小写敏感**（`lower_case_table_names`），
+> 这是云托管的限制。Django 表名全小写，不受影响。
+>
+> **补充说明 2**：若你的项目以后真要接 5.7，唯一可行的组合是 Django ≤ 4.2，
+> 且需删掉 `settings.py` 里的 `CONN_HEALTH_CHECKS`（4.2 引入，5.1 默认开启）。
+> 本项目**不走这条路**。
 
 **Q：小程序报「不在以下 request 合法域名列表中」？**
 说明第 7 步的域名没登记，或登记后未重新编译。注意域名必须 `https://` 开头、不带路径。

@@ -16,10 +16,12 @@ def health(request):
     """
     db_ok = True
     db_error = ""
+    db_version = ""
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT 1")
-            cursor.fetchone()
+            cursor.execute("SELECT VERSION()")
+            row = cursor.fetchone()
+            db_version = str(row[0]) if row else ""
     except Exception as exc:  # noqa: BLE001 —— 健康检查需吞掉一切异常并如实上报
         db_ok = False
         db_error = str(exc)[:300]
@@ -38,16 +40,24 @@ def health(request):
             "debug": os.getenv("DJANGO_DEBUG", ""),
         },
     }
+    if db_version:
+        payload["config"]["server_version"] = db_version
     if db_error:
         payload["detail"] = db_error
-        payload["hint"] = _hint(db_error)
+        payload["hint"] = _hint(db_error, db_version)
 
     return JsonResponse(payload, status=200 if db_ok else 503)
 
 
-def _hint(error: str) -> str:
+def _hint(error: str, server_version: str = "") -> str:
     """把常见数据库连接错误翻成人能看懂的一句话。"""
     low = error.lower()
+    if "8.0.11 or later is required" in low or "notsupportederror" in low:
+        return (
+            f"数据库版本过低（当前 {server_version or '未知'}），Django 5.1 要求 MySQL 8.0.11+。"
+            "云托管不支持 5.7 原地升级，请在控制台 MySQL 页面「销毁数据库」后"
+            "重新开通并选择 8.0，再重建 velosync 库。详见 backend/DEPLOY.md。"
+        )
     if "unknown database" in low:
         return "数据库不存在。Django 的 migrate 只建表不建库，请先手动执行 CREATE DATABASE velosync CHARACTER SET utf8mb4;"
     if "access denied" in low:
