@@ -137,7 +137,20 @@ async function invoke(path, options = {}) {
   });
 
   await check("POST /auth/login/ 账密登录", async () => {
-    const r = await call("/auth/login/", { method: "POST", data: { username: USER, password: PASS } });
+    let r;
+    try {
+      r = await call("/auth/login/", { method: "POST", data: { username: USER, password: PASS } });
+    } catch (e) {
+      // 区分「接口坏了」和「库里没数据」：后者会连带 20 项失败，极易被误读为接口全崩。
+      if (/用户名或密码错误|未找到|does not exist/i.test(e.message)) {
+        console.log(
+          `\n  ⚠️  账号 ${USER} 不存在或密码不符 —— 目标库很可能是「结构已建但无演示数据」。\n` +
+            `  ⚠️  这不是接口故障：下面依赖登录态的用例会全部连带失败。\n` +
+            `  ⚠️  如需完整冒烟，先在目标后端执行：python manage.py seed_demo\n`,
+        );
+      }
+      throw e;
+    }
     if (!r.access) throw new Error("缺少 access");
     token = r.access;
     return `user=${r.user.username}`;
