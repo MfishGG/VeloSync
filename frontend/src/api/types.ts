@@ -21,6 +21,8 @@ export interface SocialProvider {
   icon: string;
   enabled: boolean;
   mode: "oauth" | "mock";
+  /** 该登录方式归属的前端形态；`miniprogram` 的项在网页端不可用，必须过滤掉 */
+  channel?: "web" | "miniprogram";
 }
 
 export interface SocialAuthorizeResult {
@@ -43,6 +45,12 @@ export interface Platform {
   scopes: string[];
   capabilities: { fetch?: boolean; upload?: boolean };
   is_active: boolean;
+  /** OAuth 凭证是否齐备（authorize_url / token_url / client_id） */
+  oauth_ready: boolean;
+  /** 尚缺的凭证字段名 */
+  oauth_missing: string[];
+  /** 给用户看的下一步提示 */
+  credential_hint: string;
 }
 
 export interface PlatformAccount {
@@ -73,6 +81,126 @@ export interface PipelineEdge {
   target: number;
 }
 
+// ---------- 同步任务（数据来源 / 同步内容 / 时间范围 / 选项） ----------
+
+export interface SourceSpec {
+  code: string;
+  label: string;
+  desc: string;
+  need_account: boolean;
+  kind: "file" | "platform";
+  time_modes: string[];
+  time_note: string;
+}
+
+export interface ContentSpec {
+  key: string;
+  label: string;
+  desc: string;
+  default: boolean;
+  /** false 表示该内容尚未在适配器中实现（前端标注「预留」） */
+  implemented: boolean;
+}
+
+export interface OptionSpec {
+  key: string;
+  label: string;
+  desc: string;
+  type: "bool" | "choice" | "int";
+  default: unknown;
+  choices?: { value: string; label: string }[];
+  min?: number;
+  max?: number;
+  applies_to: string[];
+}
+
+export interface TimeModeSpec {
+  code: string;
+  label: string;
+  desc: string;
+}
+
+export interface SpecAccount {
+  id: number;
+  platform: string;
+  platform_name: string;
+  display_name: string;
+  status: string;
+  capabilities: { fetch?: boolean; upload?: boolean };
+}
+
+export interface FitRecordOption {
+  id: number;
+  activity_id: number;
+  activity_name: string;
+  file_name: string;
+  start: string;
+  end: string;
+  duration: number;
+  distance: number;
+  has_gps: boolean;
+  track_point_count: number;
+  sample_count: number;
+}
+
+export interface SyncSpec {
+  sources: SourceSpec[];
+  contents: Record<string, ContentSpec[]>;
+  options: OptionSpec[];
+  time_modes: TimeModeSpec[];
+  accounts: SpecAccount[];
+  fit_records: FitRecordOption[];
+}
+
+export interface TimeRange {
+  mode: "file" | "all" | "recent" | "custom";
+  start: string | null;
+  end: string | null;
+  days: number;
+}
+
+export interface SyncTaskConfig {
+  name: string;
+  description: string;
+  is_active: boolean;
+  auto_run: boolean;
+  source_type: string;
+  source_account: number | null;
+  source_fit_detail: number | null;
+  target_accounts: number[];
+  sync_content: string[];
+  time_range: TimeRange;
+  options: Record<string, unknown>;
+}
+
+export interface SyncPreviewTarget {
+  id: number;
+  platform: string;
+  platform_name: string;
+  name: string;
+}
+
+export interface SyncPreview {
+  source_type: string;
+  source_label: string;
+  contents: { key: string; label: string; non_activity: boolean }[];
+  targets: SyncPreviewTarget[];
+  time_range: TimeRange;
+  window: { start: string | null; end: string | null };
+  fit_bounds: { start: string | null; end: string | null };
+  options: Record<string, unknown>;
+  activity_count: number;
+  coord_fixed_points: number;
+  stats: { fetched: number; out_of_range: number; no_gps: number };
+  items: {
+    activity_id: number;
+    name: string;
+    type: string;
+    start: string;
+    distance: number;
+  }[];
+}
+
 export interface PipelineSummary {
   id: number;
   name: string;
@@ -83,11 +211,35 @@ export interface PipelineSummary {
   created_at: string;
   node_count: number;
   last_run_status: string | null;
+  source_type: string;
+  source_label: string;
+  content_labels: string[];
+  target_count: number;
+  target_summary: string;
+  time_summary: string;
 }
 
 export interface Pipeline extends PipelineSummary {
   nodes: PipelineNode[];
   edges: PipelineEdge[];
+  source_account: number | null;
+  source_account_detail: PlatformAccount | null;
+  source_fit_detail: number | null;
+  source_fit_name: string | null;
+  target_accounts: number[];
+  target_accounts_detail: PlatformAccount[];
+  sync_content: string[];
+  time_range: TimeRange;
+  options: Record<string, unknown>;
+}
+
+export interface RunStats {
+  activities: number;
+  uploaded: number;
+  skipped: number;
+  failed: number;
+  coord_fixed_points: number;
+  contents: Record<string, { status: string; items: number }>;
 }
 
 export interface ActivitySyncState {
@@ -187,18 +339,40 @@ export interface FitSummary {
   /** 是否因超过上限而抽稀过（true 表示点数被裁剪） */
   downsampled: boolean;
   has_gps: boolean;
+  /** 全部预留指标的槽位统计（无数据则 count=0），前端据此决定画曲线还是留空白图 */
+  metrics: Record<string, FitMetricStats>;
+  /** 该文件实际包含哪些指标（metrics 中 count>0 的键，顺序与后端注册表一致） */
+  available_metrics: string[];
+  threshold_power?: number | null;
+  training_stress_score?: number | null;
+  intensity_factor?: number | null;
+  total_training_effect?: number | null;
+  total_cycles?: number | null;
+  avg_temperature?: number | null;
+  max_temperature?: number | null;
+  avg_grade?: number | null;
+}
+
+/** 单个指标的统计：有效点数与极值 */
+export interface FitMetricStats {
+  count: number;
+  avg: number | null;
+  max: number | null;
+  min: number | null;
 }
 
 export interface FitSample {
   t: number | null;
   distance_km: number | null;
-  speed_kmh: number | null;
-  heart_rate: number | null;
-  power: number | null;
-  cadence: number | null;
-  altitude: number | null;
-  lat: number | null;
-  lng: number | null;
+  speed_kmh?: number | null;
+  heart_rate?: number | null;
+  power?: number | null;
+  cadence?: number | null;
+  altitude?: number | null;
+  lat?: number | null;
+  lng?: number | null;
+  /** 预留：其余 FIT 指标（坡度 / 温度 / 卡路里 / 垂直振幅 / 触地时间 / 步幅 / 肌氧 / 踩踏平顺度 / 扭矩效率 / 累计功率…） */
+  [metric: string]: number | null | undefined;
 }
 
 export interface FitDetail {

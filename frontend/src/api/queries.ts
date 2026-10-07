@@ -12,10 +12,14 @@ import type {
   PipelineSummary,
   Platform,
   PlatformAccount,
+  RunStats,
   SocialAuthorizeResult,
   SocialLoginResult,
   SocialProvider,
   SyncLog,
+  SyncPreview,
+  SyncSpec,
+  SyncTaskConfig,
   TokenPair,
   User,
 } from "./types";
@@ -25,6 +29,7 @@ export const qk = {
   accounts: ["accounts"] as const,
   pipelines: ["pipelines"] as const,
   pipeline: (id: number) => ["pipelines", id] as const,
+  syncSpec: ["pipelines", "sync-spec"] as const,
   activities: (params: string) => ["activities", params] as const,
   matrix: ["matrix"] as const,
   logs: (params: string) => ["logs", params] as const,
@@ -137,6 +142,56 @@ export function useDeletePipeline() {
   });
 }
 
+/** 同步任务规格目录（数据来源 / 同步内容 / 时间范围 / 选项 / 可选账号与 FIT 记录） */
+export function useSyncSpec() {
+  return useQuery({ queryKey: qk.syncSpec, queryFn: () => api<SyncSpec>("/pipelines/sync-spec/") });
+}
+
+/** 未保存配置的试运行预览（新建向导用） */
+export function usePreviewSyncConfig() {
+  return useMutation({
+    mutationFn: (body: Partial<SyncTaskConfig>) =>
+      api<SyncPreview>("/pipelines/sync-preview/", {
+        method: "POST",
+        body: JSON.stringify(body ?? {}),
+      }),
+  });
+}
+
+/** 试运行预览：只统计将同步的内容，不写入任何数据 */
+export function usePreviewSyncTask(id: number) {
+  return useMutation({
+    mutationFn: (body?: Partial<SyncTaskConfig>) =>
+      api<SyncPreview>(`/pipelines/${id}/preview/`, {
+        method: "POST",
+        body: JSON.stringify(body ?? {}),
+      }),
+  });
+}
+
+/** 直接带着完整同步任务配置创建 */
+export function useCreateSyncTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: SyncTaskConfig) =>
+      api<Pipeline>("/pipelines/", { method: "POST", body: JSON.stringify(body) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.pipelines }),
+  });
+}
+
+/** 保存结构化同步配置（不含画布节点，后端会自动重建节点图） */
+export function useSaveSyncTask(id: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: SyncTaskConfig) =>
+      api<Pipeline>(`/pipelines/${id}/`, { method: "PUT", body: JSON.stringify(body) }),
+    onSuccess: (data) => {
+      qc.setQueryData(qk.pipeline(id), data);
+      qc.invalidateQueries({ queryKey: qk.pipelines });
+    },
+  });
+}
+
 export interface SavePipelinePayload {
   name: string;
   description: string;
@@ -153,7 +208,7 @@ export interface SavePipelinePayload {
   edges: { source: string; target: string }[];
 }
 
-export function useSavePipeline(id: number) {
+export function useSavePipelineGraph(id: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: SavePipelinePayload) =>
@@ -168,11 +223,19 @@ export function useSavePipeline(id: number) {
 export function useRunPipeline(id: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api<{ id: number; status: string }>(`/pipelines/${id}/run/`, { method: "POST" }),
+    mutationFn: () =>
+      api<{ id: number; status: string; stats?: RunStats }>(`/pipelines/${id}/run/`, { method: "POST" }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.pipelines });
       qc.invalidateQueries({ queryKey: qk.logs("") });
     },
+  });
+}
+
+/** 立即运行某条同步任务（列表页直接调用，避免 hook 绑定 id 的时序问题） */
+export function runPipeline(id: number) {
+  return api<{ id: number; status: string; stats?: RunStats }>(`/pipelines/${id}/run/`, {
+    method: "POST",
   });
 }
 
@@ -226,8 +289,10 @@ export function fetchMe() {
 }
 
 /** 可用的第三方快捷登录方式（后端按是否配置凭证返回 oauth / mock 模式） */
-export function fetchSocialProviders() {
-  return api<{ results: SocialProvider[] }>("/auth/social/providers/").then((r) => r.results);
+export function fetchSocialProviders(channel: "web" | "miniprogram" = "web") {
+  return api<{ results: SocialProvider[] }>(
+    `/auth/social/providers/?channel=${channel}`,
+  ).then((r) => r.results);
 }
 
 export function socialAuthorize(provider: string) {

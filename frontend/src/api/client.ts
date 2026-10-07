@@ -2,6 +2,21 @@
 
 const BASE = "/api";
 
+/** 带状态码与业务错误码的异常，便于页面按 code 分支处理（例如 oauth_not_configured） */
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  payload: Record<string, unknown> | null;
+
+  constructor(message: string, status: number, payload: Record<string, unknown> | null = null) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = typeof payload?.code === "string" ? payload.code : undefined;
+    this.payload = payload;
+  }
+}
+
 let accessToken: string | null = localStorage.getItem("velosync_access");
 let refreshToken: string | null = localStorage.getItem("velosync_refresh");
 
@@ -63,8 +78,9 @@ export async function api<T = unknown>(path: string, options: RequestInit = {}):
     }
   }
   if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
-    throw new Error(body?.detail ?? `请求失败（${res.status}）`);
+    const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    const detail = typeof body?.detail === "string" ? body.detail : `请求失败（${res.status}）`;
+    throw new ApiError(detail, res.status, body);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

@@ -29,7 +29,7 @@ export default function LogsPage() {
       <header className="mb-4 flex flex-wrap items-center gap-3">
         <div>
           <h1 className="text-xl font-bold text-slate-800">同步日志</h1>
-          <p className="text-sm text-slate-400">时间轴 + 表格双视图 · 按级别 / 管道筛选</p>
+          <p className="text-sm text-slate-400">时间轴 + 表格双视图 · 按级别 / 同步任务筛选</p>
         </div>
         <div className="ml-auto flex items-center gap-2">
           <select
@@ -48,7 +48,7 @@ export default function LogsPage() {
             onChange={(e) => setPipelineId(e.target.value)}
             className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm outline-none focus:border-indigo-400"
           >
-            <option value="">全部管道</option>
+            <option value="">全部同步任务</option>
             {(pipelines ?? []).map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -81,7 +81,7 @@ export default function LogsPage() {
               <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
                 <th className="px-3 py-2.5 font-medium">级别</th>
                 <th className="px-3 py-2.5 font-medium">消息</th>
-                <th className="px-3 py-2.5 font-medium">管道</th>
+                <th className="px-3 py-2.5 font-medium">同步任务</th>
                 <th className="px-3 py-2.5 font-medium">活动</th>
                 <th className="px-3 py-2.5 font-medium">时间</th>
               </tr>

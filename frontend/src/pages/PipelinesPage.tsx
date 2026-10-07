@@ -1,8 +1,18 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Play, Plus, Settings2, Trash2, Workflow } from "lucide-react";
-import { qk, useCreatePipeline, useDeletePipeline, usePipelines } from "../api/queries";
+import {
+  CalendarRange,
+  Loader2,
+  Play,
+  Plus,
+  RefreshCw,
+  Settings2,
+  Trash2,
+  Users,
+} from "lucide-react";
+import { qk, runPipeline, useDeletePipeline, usePipelines, useSyncSpec } from "../api/queries";
+import SyncTaskWizard from "../components/sync/SyncTaskWizard";
 
 const RUN_STATUS: Record<string, { label: string; cls: string }> = {
   success: { label: "上次运行成功", cls: "bg-emerald-50 text-emerald-600" },
@@ -14,102 +24,118 @@ const RUN_STATUS: Record<string, { label: string; cls: string }> = {
 
 export default function PipelinesPage() {
   const { data: pipelines, isLoading } = usePipelines();
-  const createMutation = useCreatePipeline();
+  const { data: spec } = useSyncSpec();
   const deleteMutation = useDeletePipeline();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [creating, setCreating] = useState(false);
+  const [wizard, setWizard] = useState(false);
+  const [runningId, setRunningId] = useState<number | null>(null);
 
-  const create = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) return;
-    setCreating(true);
+  const runTask = async (id: number) => {
+    setRunningId(id);
     try {
-      const p = await createMutation.mutateAsync({ name: name.trim(), description });
+      await runPipeline(id);
       void queryClient.invalidateQueries({ queryKey: qk.pipelines });
-      navigate(`/pipelines/${p.id}`);
+      void queryClient.invalidateQueries({ queryKey: qk.logs("") });
+      void queryClient.invalidateQueries({ queryKey: qk.matrix });
     } finally {
-      setCreating(false);
-      setName("");
-      setDescription("");
+      setRunningId(null);
     }
+  };
+
+  const remove = async (id: number) => {
+    if (!window.confirm("确定删除这条同步任务？删除后不可恢复。")) return;
+    await deleteMutation.mutateAsync(id);
   };
 
   return (
     <div className="space-y-6 p-6">
-      <header>
-        <h1 className="text-xl font-bold text-slate-800">同步管道</h1>
-        <p className="text-sm text-slate-400">可视化数据流：源 → 过滤器 → 目标</p>
-      </header>
-
-      <form onSubmit={create} className="flex flex-wrap items-end gap-3 rounded-xl border border-dashed border-slate-300 bg-white p-4">
-        <div className="min-w-48 flex-1">
-          <label className="mb-1 block text-xs font-medium text-slate-500">新管道名称</label>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="例如：骑行活动 → Strava"
-            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-400"
-          />
-        </div>
-        <div className="min-w-48 flex-[2]">
-          <label className="mb-1 block text-xs font-medium text-slate-500">描述（可选）</label>
-          <input
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="这条管道做什么"
-            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-400"
-          />
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-slate-800">同步任务</h1>
+          <p className="text-sm text-slate-400">
+            数据来源 → 同步内容 → 目标账号，可设定时间范围与纠偏 / 去重等策略
+          </p>
         </div>
         <button
-          type="submit"
-          disabled={creating || !name.trim()}
+          onClick={() => setWizard(true)}
+          disabled={!spec}
           className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
         >
-          {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-          创建并编辑
+          <Plus className="h-4 w-4" />
+          新建同步任务
         </button>
-      </form>
+      </header>
 
       {isLoading ? (
-        <div className="p-8 text-sm text-slate-400">加载管道中…</div>
+        <div className="p-8 text-sm text-slate-400">加载同步任务中…</div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {(pipelines ?? []).map((p) => {
             const runStatus = p.last_run_status ? RUN_STATUS[p.last_run_status] : null;
             return (
               <div key={p.id} className="rounded-xl border border-slate-200 bg-white p-5">
                 <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
-                      <Workflow className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-slate-800">{p.name}</h3>
-                      <p className="mt-0.5 line-clamp-2 text-xs text-slate-400">{p.description || "暂无描述"}</p>
-                    </div>
+                  <div className="min-w-0">
+                    <h3 className="truncate font-semibold text-slate-800">{p.name}</h3>
+                    <p className="mt-0.5 line-clamp-2 text-xs text-slate-400">
+                      {p.description || "暂无描述"}
+                    </p>
                   </div>
                   <div className="flex shrink-0 gap-1">
                     <Link
                       to={`/pipelines/${p.id}`}
                       className="rounded-md p-1.5 text-slate-400 hover:bg-slate-50 hover:text-indigo-600"
-                      title="打开编辑器"
+                      title="配置任务"
                     >
                       <Settings2 className="h-4 w-4" />
                     </Link>
                     <button
-                      onClick={() => void deleteMutation.mutateAsync(p.id)}
+                      onClick={() => void remove(p.id)}
                       className="rounded-md p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500"
-                      title="删除管道"
+                      title="删除任务"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
+
+                {/* 源 → 目标 */}
+                <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                  <span className="rounded-md bg-indigo-50 px-2 py-0.5 font-medium text-indigo-600">
+                    {p.source_label || "未设置来源"}
+                  </span>
+                  <span className="text-slate-300">→</span>
+                  {p.target_count ? (
+                    <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-emerald-600">
+                      <Users className="mr-1 inline h-3 w-3" />
+                      {p.target_summary}
+                    </span>
+                  ) : (
+                    <span className="rounded-md bg-slate-100 px-2 py-0.5 text-slate-400">未选目标账号</span>
+                  )}
+                </div>
+
+                {/* 同步内容 */}
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {p.content_labels?.length ? (
+                    p.content_labels.map((c) => (
+                      <span key={c} className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
+                        {c}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-[11px] text-slate-300">未选择同步内容</span>
+                  )}
+                </div>
+
+                {/* 时间范围 */}
+                <div className="mt-2 flex items-center gap-1 text-[11px] text-slate-400">
+                  <CalendarRange className="h-3 w-3" />
+                  {p.time_summary || "未设置时间范围"}
+                </div>
+
                 <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
-                  <span className="rounded-md bg-slate-100 px-2 py-0.5 text-slate-500">{p.node_count} 个节点</span>
                   <span className={`rounded-md px-2 py-0.5 ${p.is_active ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"}`}>
                     {p.is_active ? "已启用" : "已停用"}
                   </span>
@@ -117,20 +143,44 @@ export default function PipelinesPage() {
                     {p.auto_run ? "定时自动运行" : "手动运行"}
                   </span>
                   {runStatus && <span className={`rounded-md px-2 py-0.5 ${runStatus.cls}`}>{runStatus.label}</span>}
-                  <span className="ml-auto text-slate-300">
-                    {p.last_run_at ? new Date(p.last_run_at).toLocaleString("zh-CN") : "从未运行"}
-                  </span>
+                  <button
+                    onClick={() => void runTask(p.id)}
+                    disabled={runningId !== null || !p.is_active}
+                    className="ml-auto flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {runningId === p.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Play className="h-3.5 w-3.5" />
+                    )}
+                    {runningId === p.id ? "执行中…" : "立即运行"}
+                  </button>
+                </div>
+                <div className="mt-2 text-[11px] text-slate-300">
+                  {p.last_run_at ? `上次运行 ${new Date(p.last_run_at).toLocaleString("zh-CN")}` : "从未运行"}
                 </div>
               </div>
             );
           })}
+
           {(pipelines ?? []).length === 0 && (
             <div className="col-span-full rounded-xl bg-white p-10 text-center text-sm text-slate-400">
-              还没有管道，先创建一个吧
-              <Play className="mx-auto mt-2 h-5 w-5 text-slate-300" />
+              还没有同步任务，点击右上角「新建同步任务」开始
+              <RefreshCw className="mx-auto mt-2 h-5 w-5 text-slate-300" />
             </div>
           )}
         </div>
+      )}
+
+      {wizard && spec && (
+        <SyncTaskWizard
+          spec={spec}
+          onClose={() => setWizard(false)}
+          onCreated={(id) => {
+            setWizard(false);
+            navigate(`/pipelines/${id}`);
+          }}
+        />
       )}
     </div>
   );

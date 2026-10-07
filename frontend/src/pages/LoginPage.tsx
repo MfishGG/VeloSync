@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
-import { Bike, CheckCircle2, Loader2 } from "lucide-react";
+import { CheckCircle2, Loader2 } from "lucide-react";
+import BrandMark from "../components/BrandMark";
 import SocialIcon from "../components/SocialIcon";
 import SocialLoginDialog from "../components/SocialLoginDialog";
 import { fetchSocialProviders, socialAuthorize } from "../api/queries";
@@ -41,8 +42,14 @@ export default function LoginPage() {
 
   useEffect(() => {
     let alive = true;
+    // 只保留网页端可用的登录方式：wechat_mp（wx.login → code2session）是小程序专用，
+    // 网页端拿不到 code，渲染出来点了必然失败，必须过滤掉。
     fetchSocialProviders()
-      .then((list) => alive && setProviders(list))
+      .then(
+        (list) =>
+          alive &&
+          setProviders((list || []).filter((p) => (p.channel ?? "web") !== "miniprogram")),
+      )
       .catch(() => {
         if (!alive) return;
         setProviders([]);
@@ -133,9 +140,7 @@ export default function LoginPage() {
     <div className="flex h-full items-center justify-center bg-gradient-to-br from-indigo-50 via-slate-100 to-sky-50">
       <div className="w-96 rounded-2xl border border-slate-200 bg-white p-8 shadow-xl">
         <div className="mb-6 flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-600 text-white">
-            <Bike className="h-6 w-6" />
-          </div>
+          <BrandMark className="h-11 w-11 shrink-0" />
           <div>
             <h1 className="text-lg font-bold text-slate-800">VeloSync 速同</h1>
             <p className="text-xs text-slate-400">跨平台运动数据同步中枢</p>

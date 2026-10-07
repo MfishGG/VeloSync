@@ -15,8 +15,18 @@ const STATUS_RING: Record<string, string> = {
 };
 
 export default function VeloNode({ data, selected }: NodeProps<VeloNodeData>) {
-  const meta = META[data.nodeType];
+  const isFileSource = data.nodeType === "source" && data.config?.source_type === "fit";
+  const meta = { ...META[data.nodeType] };
+  if (isFileSource) meta.label = "源 · FIT 记录";
   const Icon = meta.icon;
+  const contentCount = Array.isArray(data.config?.content) ? (data.config.content as string[]).length : 0;
+  const sub =
+    data.accountName ??
+    (data.nodeType === "filter"
+      ? filterSummary(data.config)
+      : isFileSource
+        ? "本地 FIT 记录"
+        : "未选择账号");
   return (
     <div
       className={`w-44 rounded-xl border-2 border-slate-200 bg-white px-3 py-2.5 shadow-sm transition-shadow ${
@@ -30,9 +40,10 @@ export default function VeloNode({ data, selected }: NodeProps<VeloNodeData>) {
         </span>
         <div className="min-w-0">
           <div className="truncate text-xs font-semibold text-slate-700">{meta.label}</div>
-          <div className="truncate text-[10px] text-slate-400">
-            {data.accountName ?? (data.nodeType === "filter" ? filterSummary(data.config) : "未选择账号")}
-          </div>
+          <div className="truncate text-[10px] text-slate-400">{sub}</div>
+          {data.nodeType === "target" && contentCount > 0 && (
+            <div className="truncate text-[10px] text-slate-400">同步内容 {contentCount} 项</div>
+          )}
         </div>
       </div>
       <Handle type="source" position={Position.Bottom} className="!h-2 !w-2 !bg-slate-400" />
@@ -48,6 +59,11 @@ function filterSummary(config: Record<string, unknown>): string {
     const max = config.max_distance != null ? `≤${config.max_distance}km` : "";
     return `按距离 ${min || max || "全部"}`;
   }
-  if (type === "by_date_range") return "按日期范围";
+  if (type === "by_date_range") {
+    const from = (config.date_from as string) || "";
+    const to = (config.date_to as string) || "";
+    if (!from && !to) return "时间范围：不限";
+    return `时间范围：${from || "不限"} ~ ${to || "不限"}`;
+  }
   return "未配置规则";
 }

@@ -11,24 +11,14 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import {
-  Area,
-  CartesianGrid,
-  ComposedChart,
-  Legend,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { deleteFit, uploadFit, useFitDetail, useFitHistory } from "../api/queries";
-import type { FitDetail, FitHistoryItem } from "../api/types";
+import type { FitDetail, FitHistoryItem, FitMetricStats } from "../api/types";
 import { isAMapConfigured } from "../utils/amap";
 import { fmtClock, fmtDuration } from "../utils/format";
 import AmapTrackPlayer from "../components/AmapTrackPlayer";
 import ConfirmDialog from "../components/ConfirmDialog";
+import FitMetricChart, { type ChartAxis } from "../components/FitMetricChart";
+import { FIT_METRICS, defaultOverlayKeys, type MetricDef } from "../utils/fitMetrics";
 
 const TYPE_LABEL: Record<string, string> = {
   cycling: "骑行",
@@ -38,6 +28,8 @@ const TYPE_LABEL: Record<string, string> = {
 };
 
 type Axis = "time" | "distance";
+/** split = 每个指标占一行；overlay = 多个指标叠在一张图 */
+type ChartMode = "split" | "overlay";
 
 function Metric({ label, value, unit }: { label: string; value: string | number; unit?: string }) {
   return (
@@ -102,6 +94,9 @@ export default function FitPage() {
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [axis, setAxis] = useState<Axis>("time");
+  const [chartMode, setChartMode] = useState<ChartMode>("split");
+  const [showEmpty, setShowEmpty] = useState(true);
+  const [overlayKeys, setOverlayKeys] = useState<string[]>([]);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [pendingDelete, setPendingDelete] = useState<FitHistoryItem | null>(null);
   const [withActivity, setWithActivity] = useState(false);
@@ -163,47 +158,78 @@ export default function FitPage() {
   // 以"本次上传结果"优先，其次是按 activity 查询到的详情
   const detail = uploaded ?? queried ?? null;
 
-  const series = useMemo(
+  const series = useMemo<Array<Record<string, unknown>>>(
     () =>
-      (detail?.samples ?? []).map((s) => ({
-        t: s.t ?? 0,
-        d: s.distance_km ?? 0,
-        heart_rate: s.heart_rate,
-        power: s.power,
-        speed: s.speed_kmh,
-        altitude: s.altitude,
-        cadence: s.cadence,
-      })),
+      (detail?.samples ?? []).map((s) => ({ ...s, d: s.distance_km ?? 0 }) as Record<string, unknown>),
     [detail],
   );
 
-  const bounds = useMemo(() => {
-    if (!series.length) return { maxT: 0, maxD: 0 };
-    return {
-      maxT: Math.max(...series.map((s) => s.t)),
-      maxD: Math.max(...series.map((s) => s.d)),
-    };
-  }, [series]);
+  // 全部指标的统计（后端预留 15 个槽位，没有数据的 count=0）
+  // 旧记录（本次改动前解析的）没有 summary.metrics，退化为从采样点现算，避免误判成"无数据"
+  const stats = useMemo<Record<string, FitMetricStats>>(() => {
+    if (detail?.summary.metrics) return detail.summary.metrics;
+    const fallback: Record<string, FitMetricStats> = {};
+    for (const m of FIT_METRICS) {
+      const vals = series
+        .map((row) => row[m.key])
+        .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+      fallback[m.key] = vals.length
+        ? {
+            count: vals.length,
+            avg: Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10,
+            max: Math.round(Math.max(...vals) * 10) / 10,
+            min: Math.round(Math.min(...vals) * 10) / 10,
+          }
+        : { count: 0, avg: null, max: null, min: null };
+    }
+    return fallback;
+  }, [detail, series]);
 
-  const axisProps = useMemo(
+  const available = useMemo(
+    () =>
+      detail?.summary.available_metrics ??
+      FIT_METRICS.filter((m) => (stats[m.key]?.count ?? 0) > 0).map((m) => m.key),
+    [detail, stats],
+  );
+  const hasMetric = (m: MetricDef) => (stats[m.key]?.count ?? 0) > 0;
+
+  // 切换活动时重置叠加选择（默认勾选有数据的核心指标）
+  const detailKey = detail?.activity ?? 0;
+  useEffect(() => {
+    setOverlayKeys(defaultOverlayKeys(detail?.summary.available_metrics));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailKey]);
+
+  const toggleOverlay = (key: string) =>
+    setOverlayKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+
+  const bounds = useMemo(() => {
+    const rows = detail?.samples ?? [];
+    if (!rows.length) return { maxT: 0, maxD: 0 };
+    return {
+      maxT: Math.max(...rows.map((s) => s.t ?? 0)),
+      maxD: Math.max(...rows.map((s) => s.distance_km ?? 0)),
+    };
+  }, [detail]);
+
+  const axisProps = useMemo<ChartAxis>(
     () =>
       axis === "time"
         ? {
             dataKey: "t",
-            type: "number" as const,
-            domain: [0, bounds.maxT] as [number, number],
+            type: "number",
+            domain: [0, bounds.maxT],
             tickFormatter: (v: number) => fmtClock(v),
-            label: "时长",
           }
         : {
             dataKey: "d",
-            type: "number" as const,
-            domain: [0, bounds.maxD] as [number, number],
+            type: "number",
+            domain: [0, bounds.maxD],
             tickFormatter: (v: number) => `${Number(v).toFixed(1)}`,
-            label: "里程 km",
           },
     [axis, bounds],
   );
+  const axisLabel = axis === "time" ? "时间" : "距离";
 
   const labelFormatter = (v: number) =>
     axis === "time" ? `时间 ${fmtClock(v)}` : `里程 ${Number(v).toFixed(2)} km`;
@@ -217,6 +243,8 @@ export default function FitPage() {
   };
 
   const hasMap = isAMapConfigured();
+  const splitDefs = showEmpty ? FIT_METRICS : FIT_METRICS.filter(hasMetric);
+  const overlayDefs = FIT_METRICS.filter((m) => overlayKeys.includes(m.key));
   const gpsCount = detail?.track.length ?? 0;
   const rawGps = detail?.summary.raw_track_count ?? gpsCount;
 
@@ -228,7 +256,8 @@ export default function FitPage() {
           FIT 文件解析
         </h1>
         <p className="mt-1 text-xs text-slate-400">
-          上传 .fit 文件查看完整运动数据：汇总指标、心率/功率曲线（可切换时间或距离维度）、海拔剖面与 GPS 轨迹回放
+          上传 .fit 文件查看完整运动数据：汇总指标、15 类指标曲线（可切换时间或距离维度、可叠加对比）、海拔剖面与
+          GPS 轨迹回放；文件里没有的指标会保留空白图位
         </p>
       </div>
 
@@ -432,129 +461,162 @@ export default function FitPage() {
               <Metric label="标准化功率 NP" value={detail.summary.normalized_power ?? "-"} unit="W" />
               <Metric label="平均踏频" value={detail.summary.avg_cadence ?? "-"} unit="rpm" />
               <Metric label="平均速度" value={detail.summary.avg_speed_kmh ?? "-"} unit="km/h" />
+              {detail.summary.avg_temperature != null && (
+                <Metric label="平均温度" value={detail.summary.avg_temperature} unit="°C" />
+              )}
+              {detail.summary.avg_grade != null && (
+                <Metric label="平均坡度" value={detail.summary.avg_grade} unit="%" />
+              )}
+              {detail.summary.threshold_power != null && (
+                <Metric label="功率阈值 FTP" value={detail.summary.threshold_power} unit="W" />
+              )}
+              {detail.summary.training_stress_score != null && (
+                <Metric label="训练负荷 TSS" value={detail.summary.training_stress_score} />
+              )}
+              {detail.summary.intensity_factor != null && (
+                <Metric label="强度因子 IF" value={detail.summary.intensity_factor} />
+              )}
+              {detail.summary.total_training_effect != null && (
+                <Metric label="训练效果 TE" value={detail.summary.total_training_effect} />
+              )}
             </div>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-5 py-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400">横轴维度</span>
-              <div className="flex rounded-lg bg-slate-100 p-0.5">
-                {(
-                  [
-                    ["time", "按时间"],
-                    ["distance", "按距离"],
-                  ] as [Axis, string][]
-                ).map(([key, text]) => (
-                  <button
-                    key={key}
-                    onClick={() => setAxis(key)}
-                    className={`rounded-md px-3 py-1 text-xs transition ${
-                      axis === key
-                        ? "bg-white font-medium text-indigo-600 shadow-sm"
-                        : "text-slate-500 hover:text-slate-700"
-                    }`}
-                  >
-                    {text}
-                  </button>
-                ))}
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400">横轴</span>
+                <div className="flex rounded-lg bg-slate-100 p-0.5">
+                  {(
+                    [
+                      ["time", "按时间"],
+                      ["distance", "按距离"],
+                    ] as [Axis, string][]
+                  ).map(([key, text]) => (
+                    <button
+                      key={key}
+                      onClick={() => setAxis(key)}
+                      className={`rounded-md px-3 py-1 text-xs transition ${
+                        axis === key
+                          ? "bg-white font-medium text-indigo-600 shadow-sm"
+                          : "text-slate-500 hover:text-slate-700"
+                      }`}
+                    >
+                      {text}
+                    </button>
+                  ))}
+                </div>
               </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400">图表</span>
+                <div className="flex rounded-lg bg-slate-100 p-0.5">
+                  {(
+                    [
+                      ["split", "分指标"],
+                      ["overlay", "叠加"],
+                    ] as [ChartMode, string][]
+                  ).map(([key, text]) => (
+                    <button
+                      key={key}
+                      onClick={() => setChartMode(key)}
+                      className={`rounded-md px-3 py-1 text-xs transition ${
+                        chartMode === key
+                          ? "bg-white font-medium text-indigo-600 shadow-sm"
+                          : "text-slate-500 hover:text-slate-700"
+                      }`}
+                    >
+                      {text}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-500">
+                <input
+                  type="checkbox"
+                  checked={showEmpty}
+                  onChange={(e) => setShowEmpty(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-indigo-600"
+                />
+                显示无数据指标
+              </label>
             </div>
             <p className="text-[11px] text-slate-400">
-              鼠标移到曲线上可同步定位地图上的当前位置 · 共 {series.length} 个采样点
+              鼠标移到曲线上可同步定位地图上的当前位置 · 共 {series.length} 个采样点 · 本文件含{" "}
+              {available.length}/{FIT_METRICS.length} 项指标
             </p>
           </div>
 
-          <div className="grid gap-5 lg:grid-cols-2">
-            <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <h3 className="mb-3 text-sm font-semibold text-slate-700">
-                心率与功率
-                <span className="ml-2 text-[11px] font-normal text-slate-400">
-                  （{axis === "time" ? "时间" : "距离"}轴）
-                </span>
-              </h3>
-              <ResponsiveContainer width="100%" height={240}>
-                <LineChart
+          {chartMode === "split" ? (
+            <div className="space-y-5">
+              {splitDefs.map((d) => (
+                <FitMetricChart
+                  key={d.key}
+                  title={`${d.label}（${d.unit}）`}
+                  defs={[d]}
                   data={series}
-                  margin={{ top: 5, right: 10, left: -18, bottom: 0 }}
-                  onMouseMove={(state: any) => {
-                    const i = state?.activeTooltipIndex;
-                    if (typeof i === "number") setHoverIndex(i);
-                  }}
-                  onMouseLeave={() => setHoverIndex(null)}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis {...axisProps} tick={{ fontSize: 10 }} interval="preserveStartEnd" minTickGap={28} />
-                  <YAxis yAxisId="hr" tick={{ fontSize: 10 }} domain={[60, "dataMax + 10"]} />
-                  <YAxis yAxisId="pw" orientation="right" tick={{ fontSize: 10 }} />
-                  <Tooltip labelFormatter={labelFormatter} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Line
-                    yAxisId="hr"
-                    type="monotone"
-                    dataKey="heart_rate"
-                    name="心率 bpm"
-                    stroke="#ef4444"
-                    dot={false}
-                    strokeWidth={1.6}
-                  />
-                  <Line
-                    yAxisId="pw"
-                    type="monotone"
-                    dataKey="power"
-                    name="功率 W"
-                    stroke="#f59e0b"
-                    dot={false}
-                    strokeWidth={1.6}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+                  axis={axisProps}
+                  axisLabel={axisLabel}
+                  labelFormatter={labelFormatter}
+                  stats={stats}
+                  onHover={setHoverIndex}
+                  badge={hasMetric(d) ? d.group : "预留 · 无数据"}
+                />
+              ))}
             </div>
+          ) : (
+            <>
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-slate-400">叠加指标</span>
+                  {FIT_METRICS.map((m) => {
+                    const on = overlayKeys.includes(m.key);
+                    return (
+                      <button
+                        key={m.key}
+                        onClick={() => toggleOverlay(m.key)}
+                        title={`${m.group}${hasMetric(m) ? "" : "（本文件未记录，叠加后不会画线）"}`}
+                        className={`rounded-full border px-2.5 py-1 text-[11px] transition ${
+                          on
+                            ? "border-transparent text-white"
+                            : "border-slate-200 text-slate-500 hover:bg-slate-50"
+                        }`}
+                        style={on ? { backgroundColor: m.color } : undefined}
+                      >
+                        {m.label}
+                        {!hasMetric(m) && (
+                          <span className={on ? "ml-1 opacity-70" : "ml-1 text-slate-300"}>空</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] leading-relaxed text-slate-400">
+                  每项一条独立纵轴：左侧第一项、右侧第二项，其余隐藏刻度但比例正确。带「空」的表示本文件未记录该指标。
+                </p>
+              </div>
 
-            <div className="rounded-xl border border-slate-200 bg-white p-5">
-              <h3 className="mb-3 text-sm font-semibold text-slate-700">
-                速度与海拔
-                <span className="ml-2 text-[11px] font-normal text-slate-400">
-                  （{axis === "time" ? "时间" : "距离"}轴）
-                </span>
-              </h3>
-              <ResponsiveContainer width="100%" height={240}>
-                <ComposedChart
+              {overlayDefs.length > 0 ? (
+                <FitMetricChart
+                  title="多指标叠加"
+                  defs={overlayDefs}
                   data={series}
-                  margin={{ top: 5, right: 10, left: -18, bottom: 0 }}
-                  onMouseMove={(state: any) => {
-                    const i = state?.activeTooltipIndex;
-                    if (typeof i === "number") setHoverIndex(i);
-                  }}
-                  onMouseLeave={() => setHoverIndex(null)}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis {...axisProps} tick={{ fontSize: 10 }} interval="preserveStartEnd" minTickGap={28} />
-                  <YAxis yAxisId="sp" tick={{ fontSize: 10 }} />
-                  <YAxis yAxisId="al" orientation="right" tick={{ fontSize: 10 }} />
-                  <Tooltip labelFormatter={labelFormatter} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Area
-                    yAxisId="al"
-                    type="monotone"
-                    dataKey="altitude"
-                    name="海拔 m"
-                    fill="#e0e7ff"
-                    stroke="#6366f1"
-                    strokeWidth={1}
-                  />
-                  <Line
-                    yAxisId="sp"
-                    type="monotone"
-                    dataKey="speed"
-                    name="速度 km/h"
-                    stroke="#0ea5e9"
-                    dot={false}
-                    strokeWidth={1.6}
-                  />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+                  axis={axisProps}
+                  axisLabel={axisLabel}
+                  labelFormatter={labelFormatter}
+                  stats={stats}
+                  onHover={setHoverIndex}
+                  height={340}
+                  badge={`${overlayDefs.length} 项`}
+                />
+              ) : (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-white px-5 py-8 text-center text-xs text-slate-400">
+                  至少选择一个指标才会绘制叠加图
+                </div>
+              )}
+            </>
+          )}
 
           {detail.summary.has_gps && (
             <div className="rounded-xl border border-slate-200 bg-white p-5">

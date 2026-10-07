@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BookOpen, Keyboard, LogOut, Server, User } from "lucide-react";
+import ConfirmDialog from "../components/ConfirmDialog";
 import { useAuthStore } from "../stores/authStore";
 
 function EnvItem({ label, ok, detail }: { label: string; ok: boolean; detail: string }) {
@@ -19,6 +20,13 @@ export default function SettingsPage() {
   const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
   const [apiOk, setApiOk] = useState<boolean | null>(null);
+  const [logoutOpen, setLogoutOpen] = useState(false);
+
+  const doLogout = () => {
+    setLogoutOpen(false);
+    logout();
+    navigate("/login", { replace: true });
+  };
 
   useEffect(() => {
     let alive = true;
@@ -62,11 +70,8 @@ export default function SettingsPage() {
           </div>
         </dl>
         <button
-          onClick={() => {
-            logout();
-            navigate("/login");
-          }}
-          className="mt-4 flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs text-red-500 hover:bg-red-50"
+          onClick={() => setLogoutOpen(true)}
+          className="mt-4 flex items-center gap-1.5 rounded-lg bg-red-50 px-3.5 py-2 text-xs font-medium text-red-600 transition-colors hover:bg-red-100"
         >
           <LogOut className="h-3.5 w-3.5" /> 退出登录
         </button>
@@ -108,14 +113,41 @@ export default function SettingsPage() {
           <BookOpen className="h-4 w-4 text-slate-400" /> 开发者资源
         </h2>
         <div className="space-y-2 text-sm">
-          <a href="/api/docs/" target="_blank" rel="noreferrer" className="block rounded-lg border border-slate-100 px-4 py-2.5 text-indigo-600 hover:bg-indigo-50">
-            OpenAPI 文档（Swagger）→ /api/docs/
+          <a
+            href="/api/docs/"
+            target="_blank"
+            rel="noreferrer"
+            className="block rounded-lg border border-slate-100 px-4 py-2.5 hover:bg-indigo-50"
+          >
+            <span className="text-indigo-600">OpenAPI 文档（Swagger）</span>
+            <span className="mt-0.5 block text-xs text-slate-400">
+              /api/docs/ · 开发环境经 Vite 代理转发到后端
+            </span>
           </a>
-          <a href="/admin/" target="_blank" rel="noreferrer" className="block rounded-lg border border-slate-100 px-4 py-2.5 text-indigo-600 hover:bg-indigo-50">
-            Django Admin 后台 → /admin/（admin / admin123456）
+          <a
+            href="/admin/"
+            target="_blank"
+            rel="noreferrer"
+            className="block rounded-lg border border-slate-100 px-4 py-2.5 hover:bg-indigo-50"
+          >
+            <span className="text-indigo-600">Django Admin 后台</span>
+            <span className="mt-0.5 block text-xs text-slate-400">
+              /admin/ · 账号 admin / admin123456 · 也可直接访问 http://127.0.0.1:8000/admin/
+            </span>
           </a>
         </div>
       </section>
+
+      <ConfirmDialog
+        open={logoutOpen}
+        title="退出登录"
+        confirmText="退出登录"
+        danger
+        onConfirm={doLogout}
+        onCancel={() => setLogoutOpen(false)}
+      >
+        退出后需要重新输入账号密码才能进入工作台，本地保存的登录凭证将被清除。
+      </ConfirmDialog>
     </div>
   );
 }

@@ -1,7 +1,18 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link2, Loader2, LogOut, RefreshCw, ShieldCheck, ShieldAlert } from "lucide-react";
-import { api } from "../api/client";
+import {
+  AlertTriangle,
+  Info,
+  Link2,
+  Loader2,
+  LogOut,
+  RefreshCw,
+  ShieldCheck,
+  ShieldAlert,
+  Terminal,
+  UserCheck,
+} from "lucide-react";
+import { ApiError, api } from "../api/client";
 import { useAccounts, useDeleteAccount, usePlatforms, qk } from "../api/queries";
 import type { Platform } from "../api/types";
 
@@ -11,6 +22,12 @@ const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
   revoked: { label: "已撤销", cls: "bg-red-50 text-red-600" },
 };
 
+/** 未配置凭证的平台：记录缺失字段，用于展开引导面板 */
+interface CredentialGap {
+  platform: Platform;
+  missing: string[];
+}
+
 export default function AccountsPage() {
   const { data: platforms } = usePlatforms();
   const { data: accounts, refetch, isFetching } = useAccounts();
@@ -18,10 +35,14 @@ export default function AccountsPage() {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [ok, setOk] = useState(false);
+  const [gap, setGap] = useState<CredentialGap | null>(null);
+  const [demoBusy, setDemoBusy] = useState(false);
 
   const bind = async (platform: Platform) => {
     setBusy(platform.code);
     setMessage(null);
+    setGap(null);
     try {
       const res = await api<{ authorize_url: string | null; mock?: boolean }>(
         `/accounts/${platform.code}/authorize/`
@@ -31,12 +52,37 @@ export default function AccountsPage() {
         return;
       }
       // 演示平台：后端已直接建号
-      setMessage(`✅ ${platform.name} 演示账号已绑定`);
+      setOk(true);
+      setMessage(`${platform.name} 演示账号已绑定`);
       await queryClient.invalidateQueries({ queryKey: qk.accounts });
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "绑定失败");
+      setOk(false);
+      if (err instanceof ApiError && err.code === "oauth_not_configured") {
+        const missing = (err.payload?.missing as string[] | undefined) ?? platform.oauth_missing ?? [];
+        setGap({ platform, missing });
+        setMessage(null);
+      } else {
+        setMessage(err instanceof Error ? err.message : "绑定失败");
+      }
     } finally {
       setBusy(null);
+    }
+  };
+
+  /** 未配置凭证时的本地演示绑定：后端签发演示 Token，用于跑通全链路 */
+  const demoBind = async (platform: Platform) => {
+    setDemoBusy(true);
+    try {
+      await api(`/accounts/${platform.code}/demo-bind/`, { method: "POST" });
+      setOk(true);
+      setGap(null);
+      setMessage(`已以演示身份绑定 ${platform.name}（本地体验用，平台侧不会收到真实请求）`);
+      await queryClient.invalidateQueries({ queryKey: qk.accounts });
+    } catch (err) {
+      setOk(false);
+      setMessage(err instanceof Error ? err.message : "演示绑定失败");
+    } finally {
+      setDemoBusy(false);
     }
   };
 
@@ -53,7 +99,90 @@ export default function AccountsPage() {
       </header>
 
       {message && (
-        <div className="rounded-lg bg-indigo-50 px-4 py-3 text-sm text-indigo-700">{message}</div>
+        <div
+          className={`rounded-lg px-4 py-3 text-sm ${
+            ok ? "bg-indigo-50 text-indigo-700" : "bg-red-50 text-red-600"
+          }`}
+        >
+          {message}
+        </div>
+      )}
+
+      {/* 未配置凭证时的引导面板 */}
+      {gap && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-amber-800">
+                {gap.platform.name} 还没有配置 OAuth 凭证
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-amber-700">
+                绑定真实账号需要先在 {gap.platform.name} 的开放平台申请应用，拿到凭证后写入平台数据：
+              </p>
+              {gap.missing.length > 0 && (
+                <p className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs text-amber-700">缺少：</span>
+                  {gap.missing.map((f) => (
+                    <code
+                      key={f}
+                      className="rounded bg-white/70 px-1.5 py-0.5 text-[11px] text-amber-800"
+                    >
+                      {f}
+                    </code>
+                  ))}
+                </p>
+              )}
+              <div className="mt-3 space-y-1.5 rounded-lg border border-amber-200 bg-white/70 p-3 text-xs text-amber-800">
+                <p className="flex items-center gap-1.5 font-medium">
+                  <Info className="h-3.5 w-3.5" /> 两种做法
+                </p>
+                <p className="pl-5">
+                  <span className="font-medium">① 本地体验（推荐先用）：</span>
+                  点下面的「以演示身份绑定」，即可跑通「绑定 → 建同步任务 → 运行 → 看日志」全链路。
+                </p>
+                <p className="flex items-start gap-1.5 pl-0">
+                  <Terminal className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span className="pl-0">
+                    <span className="font-medium">② 真实接入：</span>
+                    拿到凭证后，在 Django Admin 的「平台」里填写，
+                    <br />
+                    或执行：
+                    <code className="ml-1 rounded bg-white px-1.5 py-0.5 text-[11px]">
+                      python manage.py set_platform_oauth {gap.platform.code} --authorize-url … --token-url …
+                      --client-id … --client-secret … --scopes …
+                    </code>
+                    <br />
+                    查看各平台状态与申请入口：
+                    <code className="ml-1 rounded bg-white px-1.5 py-0.5 text-[11px]">
+                      python manage.py set_platform_oauth --list
+                    </code>
+                  </span>
+                </p>
+              </div>
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={() => void demoBind(gap.platform)}
+                  disabled={demoBusy}
+                  className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-600 disabled:opacity-50"
+                >
+                  {demoBusy ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <UserCheck className="h-3.5 w-3.5" />
+                  )}
+                  以演示身份绑定
+                </button>
+                <button
+                  onClick={() => setGap(null)}
+                  className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100"
+                >
+                  先不绑定
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       <section>
@@ -61,6 +190,7 @@ export default function AccountsPage() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {(platforms ?? []).map((p) => {
             const bound = boundByPlatform(p.code);
+            const needsCreds = p.auth_type !== "mock" && !p.oauth_ready;
             return (
               <div key={p.id} className="rounded-xl border border-slate-200 bg-white p-5">
                 <div className="flex items-center justify-between">
@@ -81,6 +211,14 @@ export default function AccountsPage() {
                     <ShieldAlert className="h-5 w-5 text-slate-300" />
                   )}
                 </div>
+                {needsCreds && (
+                  <p
+                    className="mt-3 flex items-center gap-1 rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-600"
+                    title={`缺少：${p.oauth_missing.join("、")}`}
+                  >
+                    <AlertTriangle className="h-3 w-3 shrink-0" /> 未配置 OAuth 凭证 · 可演示绑定
+                  </p>
+                )}
                 <button
                   onClick={() => void bind(p)}
                   disabled={busy === p.code}
@@ -128,7 +266,17 @@ export default function AccountsPage() {
                   <tr key={a.id} className="border-b border-slate-50 last:border-0">
                     <td className="px-5 py-3 font-medium text-slate-700">{a.platform.name}</td>
                     <td className="px-5 py-3 text-slate-500">
-                      {a.display_name || a.platform_user_id}
+                      <span className="inline-flex items-center gap-1.5">
+                        {a.display_name || a.platform_user_id}
+                        {/^(demo|mock)-/.test(a.platform_user_id) && (
+                          <span
+                            className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500"
+                            title="本地演示身份，未接入真实平台，无法真实拉取/上传数据"
+                          >
+                            演示身份
+                          </span>
+                        )}
+                      </span>
                     </td>
                     <td className="px-5 py-3">
                       <span className={`rounded-md px-2 py-0.5 text-xs ${badge.cls}`}>{badge.label}</span>
