@@ -10,6 +10,8 @@ __pycache__/
 .venv/
 venv/
 
+# 注意：不要排除 *.sh —— docker-entrypoint.sh 是容器入口，必须进镜像
+
 # 本地数据库与静态产物（容器内重新生成）
 db.sqlite3
 *.sqlite3

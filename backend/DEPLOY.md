@@ -140,8 +140,32 @@ python manage.py createsuperuser
 
 ```bash
 curl https://<你的云托管域名>/api/health/
-# 期望：{"status": "ok", "database": "ok"}
+# 期望：{"status": "ok", "database": "ok", "config": {...}}
 ```
+
+若返回 `503` + `"database": "error"`，把返回体里的 `hint` 和 `config` 段贴出来即可定位 —— 见下方「常见问题」。
+
+### 6.5 部署失败了怎么排查（重要）
+
+云托管控制台默认只给探针结果（形如 `connection refused`），**看不到 Python 异常**。
+本项目为此做了两件事，让错误可见：
+
+1. **`docker-entrypoint.sh` 保证端口一定监听**：无论迁移成功与否都会启动 gunicorn。
+   这样「数据库配错」就表现为 `/api/health/` 返回 `503` + 可读原因，
+   而不是「容器起不来 + 只剩 connection refused」。
+2. **健康检查回显配置**：`/api/health/` 的 `config` 段显示容器**实际读到**的
+   `DB_ENGINE / DB_HOST / DB_PORT / DB_NAME / DB_USER`（密码只回显是否设置），
+   用于确认「环境变量填了但容器没读到」这类问题。
+
+排查顺序：
+
+1. 打开服务 → **日志**，看容器启动日志。正常会依次打印
+   `>>> 执行数据库迁移` → `<<< 迁移完成` → `>>> 启动 gunicorn`。
+2. 若看到 `<<< 迁移失败`，日志里会直接列出 3 条常见原因。
+3. 若容器根本没起来，看 1 分钟内的日志开头 —— 入口脚本会把
+   `DB_ENGINE / DB_HOST / DB_PORT / DB_NAME / DB_USER / 密码是否设置`
+   全部打印出来，对照上表核对。
+4. 容器起来了但接口 503 → 访问 `/api/health/`，按 `hint` 修。
 
 ### 7. 小程序端对接
 
@@ -178,6 +202,59 @@ curl https://<你的云托管域名>/api/health/
 
 **Q：容器启动后健康检查失败？**
 多为数据库连不上。确认 `DB_HOST` 用的是**内网地址**（云托管与 MySQL 需在同一地域），且 MySQL 已放行云托管的内网访问。
+
+**Q：报 `Readiness probe failed: dial tcp 10.3.10.130:80: connect: connection refused` + `Back-off restarting failed container`？**
+
+这是**部署阶段**最常见的失败，含义很明确：**容器里 80 端口没有进程监听**（`connection refused` 是「没人监听」，不是「连不通」）。
+
+本项目的 `docker-entrypoint.sh` 已专门处理这种情况：**迁移失败也会把 gunicorn 起起来**，
+所以现在遇到这个报错，先去控制台看容器日志，或直接访问 `/api/health/`，它会返回真实原因。
+（改造前 `migrate && gunicorn` 用 `&&` 串联，迁移一失败 gunicorn 就不启动，
+控制台只剩 `connection refused`，等于盲猜。）
+
+按以下顺序核对，覆盖了绝大多数情况：
+
+| # | 检查项 | 正确值 | 常见错误 |
+|---|---|---|---|
+| 1 | `DB_ENGINE` | `mysql` | 没设 → 回落 sqlite，虽然能起来但数据重启即丢 |
+| 2 | `DB_HOST` | 云 MySQL 的**内网地址**，如 `10.3.101.119` | ❌ 填成 `10.3.101.119:3306`（端口混进来了）<br>❌ 直接复制了 `MYSQL_ADDRESS` 整个值 |
+| 3 | `DB_PORT` | `3306` | 忘了单独设 |
+| 4 | `DB_NAME` | `velosync` | 库**没手动创建** → `Unknown database` |
+| 5 | `DB_USER` / `DB_PASSWORD` | 云 MySQL 的账号密码 | 用了 `MYSQL_USERNAME`/`MYSQL_PASSWORD` 这类模板变量名（本项目不读） |
+| 6 | MySQL 实例 | 与云托管服务**同地域**，且已放行内网访问 | 跨地域 / 未放行 → 连接超时 |
+
+> 如果在「环境变量」里同时看到了 `MYSQL_ADDRESS` / `MYSQL_USERNAME` / `MYSQL_PASSWORD`，
+> 那是云托管模板自动注入的，**本项目一律不读**。请把它们**拆开重填**成 `DB_HOST` / `DB_USER` / `DB_PASSWORD`。
+> 容器启动日志里若检测到「有 `MYSQL_ADDRESS` 但没 `DB_HOST`」，会打印一条明确的 `[错误]` 提示。
+
+**Q：怎么确认库建好了？**
+
+云托管 MySQL 的 WebShell 里执行：
+
+```sql
+SHOW DATABASES;
+-- 应该能看到 velosync
+
+CREATE DATABASE IF NOT EXISTS velosync
+  DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+**Q：部署成功但接口返回 503？**
+
+访问 `https://<你的域名>/api/health/`，返回体里会带上：
+
+```json
+{
+  "status": "degraded",
+  "database": "error",
+  "config": { "engine": "mysql", "host": "...", "port": "...", "name": "...", "password_set": true },
+  "detail": "…原始异常…",
+  "hint": "连不上数据库。请检查 DB_HOST …"
+}
+```
+
+`config` 段是**容器实际读到的值**（不含密码，只回显 `password_set`），
+一眼就能看出「我设了变量但容器没读到」这类问题。`hint` 是翻译过的中文建议。
 
 **Q：小程序报「不在以下 request 合法域名列表中」？**
 说明第 7 步的域名没登记，或登记后未重新编译。注意域名必须 `https://` 开头、不带路径。
