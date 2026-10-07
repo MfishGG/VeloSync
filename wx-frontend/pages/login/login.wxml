@@ -164,13 +164,13 @@
     </view>
 
     <view class="alert alert--warning" wx:if="{{providersFailed}}">
-      未连接到后端（{{baseUrlHost}}）。
+      未连接到后端（{{baseUrlHost}}），暂时无法判断登录模式。
       <text class="t-primary" bindtap="editBase">修改接口地址</text>
     </view>
     <view class="alert alert--success" wx:elif="{{wxMode === 'oauth'}}">
       已接入微信真实登录：点击上方按钮将唤起微信授权，昵称与头像来自你的微信账号。
     </view>
-    <view class="alert alert--info" wx:else>
+    <view class="alert alert--info" wx:elif="{{wxMode === 'mock' && wxModeKnown}}">
       当前为演示模式（后端未配置小程序 AppID）：微信一键登录会用本机稳定的演示身份建号，
       配置 <text class="mono">WECHAT_MP_APP_ID / WECHAT_MP_APP_SECRET</text> 后自动切换为真实登录。
     </view>

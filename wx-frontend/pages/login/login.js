@@ -43,6 +43,8 @@ Page({
     rConfirm: "",
 
     wxMode: "mock",
+    /** 是否成功问过后端。false 时界面不能断言「后端未配置」，只能说「没问到」 */
+    wxModeKnown: false,
 
     // 后端接口地址（真机预览时可在登录前直接改，不至于进不去设置页）
     baseUrl: "",
@@ -72,10 +74,12 @@ Page({
     api.auth
       .wxMiniProgramMode()
       .then((res) => {
-        if (res && res.mode) this.setData({ wxMode: res.mode });
+        if (res && res.mode) this.setData({ wxMode: res.mode, wxModeKnown: true });
       })
       .catch(() => {
-        // 连不上后端时给出提示（登录按钮仍可点，会以真实错误信息反馈）
+        // 连不上后端时给出提示（登录按钮仍可点，会以真实错误信息反馈）。
+        // 注意：这里必须把 wxModeKnown 保持为 false —— 否则界面会误报
+        // 「后端未配置小程序 AppID」，而真实原因只是网络不通 / 域名没登记。
         this.setData({ providersFailed: true });
       });
   },
