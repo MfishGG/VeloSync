@@ -4,6 +4,7 @@ const request = require("../../utils/request");
 const config = require("../../config");
 
 const BASE_URL_KEY = "velosync_base_url";
+const BASE_URL_STAMP = "velosync_base_url_stamp";
 
 Page({
   data: {
@@ -18,10 +19,15 @@ Page({
     docsUrl: "http://127.0.0.1:8000/api/docs/",
     version: "1.0.0",
     envInfo: "",
+    /** 当前环境（local / device / cloud），便于排查「为什么连的是这个地址」 */
+    envName: "",
   },
 
   onLoad() {
-    const stored = wx.getStorageSync(BASE_URL_KEY) || config.baseUrl;
+    // 与 app.js 一致：版本戳不匹配说明配置已更新，忽略过期缓存
+    const saved = wx.getStorageSync(BASE_URL_KEY);
+    const savedStamp = wx.getStorageSync(BASE_URL_STAMP);
+    const stored = saved && savedStamp === config.configStamp ? saved : config.baseUrl;
     const env = wx.getAccountInfoSync
       ? (wx.getAccountInfoSync().miniProgram || {}).envVersion || "develop"
       : "develop";
@@ -30,6 +36,7 @@ Page({
       baseUrl: stored,
       draftUrl: stored,
       user: auth.getUser(),
+      envName: config.env,
       envInfo: `${sys.platform} · ${sys.model} · 基础库 ${sys.SDKVersion || "-"} · ${env}`,
     });
     this.updateDevUrls(stored);
@@ -64,6 +71,8 @@ Page({
     }
     const normalized = url.replace(/\/+$/, "");
     wx.setStorageSync(BASE_URL_KEY, normalized);
+    // 打上当前配置版本戳，避免下次冷启动被判为过期缓存
+    wx.setStorageSync(BASE_URL_STAMP, config.configStamp);
     request.setBaseUrl(normalized);
     this.setData({ baseUrl: normalized, editing: false, testResult: "" });
     this.updateDevUrls(normalized);
@@ -73,6 +82,7 @@ Page({
   onResetUrl() {
     const def = config.baseUrl;
     wx.setStorageSync(BASE_URL_KEY, def);
+    wx.setStorageSync(BASE_URL_STAMP, config.configStamp);
     request.setBaseUrl(def);
     this.setData({ baseUrl: def, draftUrl: def, editing: false, testResult: "" });
     this.updateDevUrls(def);
