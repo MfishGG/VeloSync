@@ -3,8 +3,12 @@ from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
+from apps.core.views import health
+
 urlpatterns = [
     path("admin/", admin.site.urls),
+    # 健康检查（容器编排探测用，无需认证）
+    path("api/health/", health, name="health"),
     # 认证
     path("api/auth/", include("apps.accounts.urls")),
     # 平台与账号（/api/platforms/ + /api/accounts/...）
