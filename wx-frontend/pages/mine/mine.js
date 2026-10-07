@@ -19,12 +19,36 @@ function pickWechat(user) {
   };
 }
 
+/**
+ * 决定顶部展示的名字。
+ * 微信在新版权限收紧后常返回「微信用户」这类泛化占位昵称，
+ * 直接展示会和账号来源标签语义重复，此时改用本地用户名（或邮箱前缀）更有辨识度。
+ */
+const GENERIC_WX_NAMES = ["微信用户", "微信", "WeChat User", "wechat"];
+
+function pickDisplayName(user, wx) {
+  const raw = ((user && user.nickname) || "").trim();
+  const isGeneric = !raw || GENERIC_WX_NAMES.indexOf(raw) >= 0;
+  if (raw && !isGeneric) return raw;
+
+  // 回退顺序：本地用户名 → 邮箱前缀 → 兜底文案
+  const username = ((user && user.username) || "").trim();
+  if (username) return username;
+  const email = ((user && user.email) || "").trim();
+  if (email) return email.split("@")[0];
+  return wx && wx.connected ? "微信用户" : "骑行爱好者";
+}
+
 Page({
   data: {
     user: null,
+    /** 顶部展示的名字：昵称优先，泛化占位昵称回退到用户名 */
+    displayName: "",
     avatarUrl: "",
     /** 微信绑定信息：{ connected, real, providerName, nickname, openid, unionid, boundAt } */
     wx: { connected: false },
+    /** 账号信息（OpenID / UnionID）默认收起，避免普通用户看到一串乱码 */
+    showId: false,
     accountCount: 0,
     platformCount: 0,
     version: "1.0.0",
@@ -43,7 +67,13 @@ Page({
   /** 先用本地缓存的 user 立即渲染，避免头像闪一下空白 */
   applyUser(user) {
     if (!user) return;
-    this.setData({ user, avatarUrl: user.avatar || "", wx: pickWechat(user) });
+    const wx = pickWechat(user);
+    this.setData({
+      user,
+      avatarUrl: user.avatar || "",
+      wx,
+      displayName: pickDisplayName(user, wx),
+    });
   },
 
   /** 拉一次 /auth/me/ 拿最新的头像与绑定信息（登录响应里已带，这里作为兜底刷新） */
@@ -64,6 +94,11 @@ Page({
   /** 微信头像加载失败（链接过期等）→ 回退到品牌图标 */
   onAvatarError() {
     this.setData({ avatarUrl: "" });
+  },
+
+  /** 展开 / 收起账号信息（OpenID、UnionID） */
+  toggleId() {
+    this.setData({ showId: !this.data.showId });
   },
 
   /** 点 ID 复制到剪贴板 */
