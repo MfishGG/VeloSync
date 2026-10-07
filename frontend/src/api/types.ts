@@ -158,6 +158,96 @@ export interface SyncLog {
   activity_name: string | null;
 }
 
+// ---------- FIT 解析详情 ----------
+
+export interface FitSummary {
+  start_time: string | null;
+  sport: string | null;
+  activity_type: string;
+  distance_km: number;
+  duration: number;
+  total_ascent: number | null;
+  total_descent: number | null;
+  calories: number | null;
+  avg_heart_rate: number | null;
+  max_heart_rate: number | null;
+  avg_power: number | null;
+  max_power: number | null;
+  normalized_power: number | null;
+  avg_cadence: number | null;
+  max_cadence: number | null;
+  avg_speed_kmh: number | null;
+  max_speed_kmh: number | null;
+  sample_count: number;
+  raw_record_count: number;
+  /** 实际存储的轨迹点数 */
+  track_point_count: number;
+  /** FIT 原始含 GPS 的点数 */
+  raw_track_count: number;
+  /** 是否因超过上限而抽稀过（true 表示点数被裁剪） */
+  downsampled: boolean;
+  has_gps: boolean;
+}
+
+export interface FitSample {
+  t: number | null;
+  distance_km: number | null;
+  speed_kmh: number | null;
+  heart_rate: number | null;
+  power: number | null;
+  cadence: number | null;
+  altitude: number | null;
+  lat: number | null;
+  lng: number | null;
+}
+
+export interface FitDetail {
+  id: number;
+  activity: number;
+  file_name: string;
+  file_size: number;
+  file_hash: string;
+  device: {
+    manufacturer: string | null;
+    product: string | null;
+    serial_number: number | null;
+    time_created: string | null;
+  };
+  summary: FitSummary;
+  samples: FitSample[];
+  /** 轨迹点，顺序为 [经度, 纬度] */
+  track: [number, number][];
+  parsed_at: string;
+  created_at: string;
+}
+
+export interface FitUploadResult {
+  created: boolean;
+  activity: Activity;
+  detail: FitDetail;
+}
+
+/** FIT 导入历史（列表项，不含采样点与轨迹） */
+export interface FitHistoryItem {
+  id: number;
+  activity_id: number;
+  activity_name: string;
+  activity_type: string;
+  start_timestamp: string;
+  distance: number;
+  duration: number;
+  source_platform: string;
+  file_name: string;
+  file_size: number;
+  file_hash: string;
+  parsed_at: string;
+  created_at: string;
+  sample_count: number;
+  track_point_count: number;
+  has_gps: boolean;
+  device_name: string;
+}
+
 export interface DashboardStats {
   total_activities: number;
   synced: number;

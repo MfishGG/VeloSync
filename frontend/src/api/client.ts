@@ -44,11 +44,13 @@ async function refreshAccess(): Promise<boolean> {
 }
 
 export async function api<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
+  // FormData 交给浏览器自动设置带 boundary 的 Content-Type，不能写死 json
+  const isForm = typeof FormData !== "undefined" && options.body instanceof FormData;
   const doFetch = () =>
     fetch(`${BASE}${path}`, {
       ...options,
       headers: {
-        "Content-Type": "application/json",
+        ...(isForm ? {} : { "Content-Type": "application/json" }),
         ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         ...(options.headers ?? {}),
       },

@@ -4,6 +4,7 @@ import AppShell from "./components/layout/AppShell";
 import AccountsPage from "./pages/AccountsPage";
 import AuthCallbackPage from "./pages/AuthCallbackPage";
 import DashboardPage from "./pages/DashboardPage";
+import FitPage from "./pages/FitPage";
 import LoginPage from "./pages/LoginPage";
 import LogsPage from "./pages/LogsPage";
 import MatrixPage from "./pages/MatrixPage";
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="/pipelines" element={<PipelinesPage />} />
         <Route path="/pipelines/:id" element={<PipelineEditorPage />} />
         <Route path="/matrix" element={<MatrixPage />} />
+        <Route path="/fit" element={<FitPage />} />
         <Route path="/accounts" element={<AccountsPage />} />
         <Route path="/logs" element={<LogsPage />} />
         <Route path="/settings" element={<SettingsPage />} />

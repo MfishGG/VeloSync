@@ -3,6 +3,9 @@ import { api } from "./client";
 import type {
   Activity,
   DashboardStats,
+  FitDetail,
+  FitHistoryItem,
+  FitUploadResult,
   MatrixData,
   Paginated,
   Pipeline,
@@ -26,6 +29,7 @@ export const qk = {
   matrix: ["matrix"] as const,
   logs: (params: string) => ["logs", params] as const,
   dashboard: ["dashboard"] as const,
+  fitHistory: ["fit", "history"] as const,
 };
 
 // ---------- 查询 ----------
@@ -78,6 +82,40 @@ export function useLogs(params: string) {
 
 export function useDashboardStats() {
   return useQuery({ queryKey: qk.dashboard, queryFn: () => api<DashboardStats>("/dashboard/stats/") });
+}
+
+/** 活动是否已解析过 FIT（未解析时后端返回 404） */
+export function useFitDetail(activityId: number | null) {
+  return useQuery({
+    queryKey: ["fit", activityId],
+    queryFn: () => api<FitDetail>(`/activities/${activityId}/fit/`),
+    enabled: Number.isFinite(activityId) && (activityId ?? 0) > 0,
+    retry: false,
+  });
+}
+
+/** FIT 导入历史（按解析时间倒序） */
+export function useFitHistory() {
+  return useQuery({
+    queryKey: qk.fitHistory,
+    queryFn: () => api<FitHistoryItem[]>("/activities/fit-history/"),
+  });
+}
+
+/** 上传并解析 FIT 文件（multipart） */
+export function uploadFit(file: File, name?: string) {
+  const form = new FormData();
+  form.append("file", file);
+  if (name) form.append("name", name);
+  return api<FitUploadResult>("/activities/upload-fit/", { method: "POST", body: form });
+}
+
+/** 删除 FIT 解析详情；withActivity=true 时连活动记录一并删除（204 空响应） */
+export function deleteFit(activityId: number, withActivity = false) {
+  return api<void>(
+    `/activities/${activityId}/fit/${withActivity ? "?with_activity=1" : ""}`,
+    { method: "DELETE" },
+  );
 }
 
 // ---------- 变更 ----------

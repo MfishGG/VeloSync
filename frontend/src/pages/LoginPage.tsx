@@ -35,13 +35,22 @@ export default function LoginPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [providers, setProviders] = useState<SocialProvider[]>([]);
+  const [providersFailed, setProvidersFailed] = useState(false);
   const [dialog, setDialog] = useState<SocialProvider | null>(null);
   const noticeTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
+    let alive = true;
     fetchSocialProviders()
-      .then(setProviders)
-      .catch(() => setProviders([]));
+      .then((list) => alive && setProviders(list))
+      .catch(() => {
+        if (!alive) return;
+        setProviders([]);
+        setProvidersFailed(true);
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
 
   useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
@@ -247,7 +256,7 @@ export default function LoginPage() {
           </form>
         )}
 
-        {providers.length > 0 && (
+        {providers.length > 0 ? (
           <>
             <div className="my-5 flex items-center gap-3">
               <span className="h-px flex-1 bg-slate-200" />
@@ -273,6 +282,12 @@ export default function LoginPage() {
               ))}
             </div>
           </>
+        ) : (
+          providersFailed && (
+            <p className="mt-5 rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700">
+              第三方登录暂不可用：无法连接后端服务。请先在 backend 目录启动 Django（<code>python manage.py runserver</code>，默认 127.0.0.1:8000）后刷新页面。
+            </p>
+          )
         )}
 
         {tab === "login" && (

@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Activity, ActivitySyncState
+from .models import Activity, ActivityFitDetail, ActivitySyncState
 
 
 @admin.register(Activity)
@@ -16,3 +16,10 @@ class ActivitySyncStateAdmin(admin.ModelAdmin):
     list_display = ("activity", "platform", "status", "synced_at")
     list_filter = ("status", "platform")
     search_fields = ("activity__name",)
+
+
+@admin.register(ActivityFitDetail)
+class ActivityFitDetailAdmin(admin.ModelAdmin):
+    list_display = ("activity", "file_name", "file_size", "parsed_at")
+    search_fields = ("activity__name", "file_name", "file_hash")
+    readonly_fields = ("parsed_at", "created_at")

@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom";
 import {
   Activity,
+  FileUp,
   Grid3X3,
   LayoutDashboard,
   PanelLeftClose,
@@ -15,6 +16,7 @@ const NAV = [
   { to: "/", label: "仪表盘", icon: LayoutDashboard, end: true },
   { to: "/pipelines", label: "管道", icon: Workflow, end: false },
   { to: "/matrix", label: "活动矩阵", icon: Grid3X3, end: false },
+  { to: "/fit", label: "FIT 解析", icon: FileUp, end: false },
   { to: "/accounts", label: "账号", icon: Activity, end: false },
   { to: "/logs", label: "日志", icon: ScrollText, end: false },
   { to: "/settings", label: "设置", icon: Settings, end: false },

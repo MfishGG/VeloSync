@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useUiStore } from "../../stores/uiStore";
-import { useActivity } from "../../api/queries";
+import { useActivity, useFitDetail } from "../../api/queries";
 import { StatusIcon, statusLabel } from "../StatusIcon";
 
 function formatDuration(seconds: number): string {
@@ -14,6 +15,7 @@ export default function ContextPanel() {
   const setContext = useUiStore((s) => s.setContext);
   const isActivity = context.type === "activity";
   const { data: activity } = useActivity(isActivity ? Number(context.id) : null);
+  const { data: fit } = useFitDetail(isActivity ? Number(context.id) : null);
 
   return (
     <aside className="flex w-80 shrink-0 flex-col border-l border-slate-200 bg-white">
@@ -73,7 +75,30 @@ export default function ContextPanel() {
                 ))}
               </ul>
             </div>
-            {activity.fit_hash && (
+            {fit && (
+              <div>
+                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  FIT 解析详情
+                </h4>
+                <div className="rounded-lg border border-indigo-100 bg-indigo-50/50 p-3 text-xs text-slate-600">
+                  <p>
+                    距离 {fit.summary.distance_km} km · 爬升 {fit.summary.total_ascent ?? "-"} m · NP{" "}
+                    {fit.summary.normalized_power ?? "-"} W
+                  </p>
+                  <p className="mt-0.5">
+                    心率 {fit.summary.avg_heart_rate ?? "-"}/{fit.summary.max_heart_rate ?? "-"} bpm · 功率{" "}
+                    {fit.summary.avg_power ?? "-"}/{fit.summary.max_power ?? "-"} W
+                  </p>
+                  <Link
+                    to={`/fit?activity=${activity?.id}`}
+                    className="mt-2 inline-block text-indigo-600 hover:underline"
+                  >
+                    查看曲线与轨迹 →
+                  </Link>
+                </div>
+              </div>
+            )}
+            {activity?.fit_hash && (
               <div>
                 <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
                   FIT 哈希

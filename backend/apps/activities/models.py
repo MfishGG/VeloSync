@@ -31,6 +31,30 @@ class Activity(models.Model):
         return f"{self.name} @ {self.start_timestamp:%Y-%m-%d %H:%M}"
 
 
+class ActivityFitDetail(models.Model):
+    """FIT 文件解析详情（一个活动一份，重复解析覆盖更新）"""
+
+    activity = models.OneToOneField(
+        Activity, on_delete=models.CASCADE, related_name="fit_detail"
+    )
+    file_name = models.CharField("文件名", max_length=255, blank=True, default="")
+    file_size = models.IntegerField("文件大小(字节)", default=0)
+    file_hash = models.CharField("文件 SHA256", max_length=64, blank=True, default="")
+    device = models.JSONField("设备信息", default=dict, blank=True)
+    summary = models.JSONField("汇总指标", default=dict, blank=True)
+    samples = models.JSONField("采样序列", default=list, blank=True)
+    track = models.JSONField("轨迹点", default=list, blank=True)
+    parsed_at = models.DateTimeField("解析时间", auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "FIT 解析详情"
+        verbose_name_plural = "FIT 解析详情"
+
+    def __str__(self):
+        return f"FIT<{self.activity_id}> {self.file_name}"
+
+
 class ActivitySyncState(models.Model):
     """活动 × 平台 的同步状态（矩阵单元格）"""
 
