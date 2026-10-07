@@ -15,7 +15,7 @@ from django.utils import timezone
 
 from apps.activities.models import Activity, ActivitySyncState
 from apps.platforms.models import Platform, PlatformAccount
-from apps.pipelines.models import Pipeline, PipelineEdge, PipelineNode
+from apps.pipelines.models import Pipeline
 from apps.synclogs.models import SyncLog
 
 PLATFORMS = [
@@ -24,30 +24,42 @@ PLATFORMS = [
         "name": "演示平台 (Mock)",
         "auth_type": "mock",
         "capabilities": {"fetch": True, "upload": True},
+        "app_scheme": "",
+        "miniprogram_appid": "",
     },
     {
         "code": "igpsport",
         "name": "iGPSPORT",
         "auth_type": "oauth2",
         "capabilities": {"fetch": True, "upload": False},
+        # 移动端绑定兜底：复制该 scheme 到系统浏览器可唤起官方 App
+        "app_scheme": "igpsport://",
+        # 拿到 iGPSPORT 官方小程序 AppID 后填这里，小程序内即可直接跳转授权
+        "miniprogram_appid": "",
     },
     {
         "code": "garmin",
         "name": "Garmin Connect",
         "auth_type": "oauth2",
         "capabilities": {"fetch": True, "upload": True},
+        "app_scheme": "garminconnect://",
+        "miniprogram_appid": "",
     },
     {
         "code": "strava",
         "name": "Strava",
         "auth_type": "oauth2",
         "capabilities": {"fetch": True, "upload": True},
+        "app_scheme": "strava://",
+        "miniprogram_appid": "",
     },
     {
         "code": "coros",
         "name": "COROS",
         "auth_type": "oauth2",
         "capabilities": {"fetch": True, "upload": True},
+        "app_scheme": "coros://",
+        "miniprogram_appid": "",
     },
 ]
 
@@ -216,55 +228,61 @@ class Command(BaseCommand):
             created_at=now - timedelta(hours=8),
         )
 
-        # 8. 示例管道
-        p1 = Pipeline.objects.create(
+        # 8. 示例同步任务（结构化配置 → 自动展开执行图）
+        garmin_acc = PlatformAccount.objects.create(
             user=user,
-            name="国内码表 → 国际平台",
-            description="拉取演示码表全部活动，仅保留骑行，同步到 Strava 与 Garmin Connect",
-            auto_run=False,
+            platform=platforms["garmin"],
+            platform_user_id=f"garmin-{user.id}",
+            display_name="佳明 955",
+            status="active",
         )
-        n_source = PipelineNode.objects.create(
-            pipeline=p1, node_type="source", account=mock_acc,
-            config={}, position_x=80, position_y=160,
-        )
-        n_filter = PipelineNode.objects.create(
-            pipeline=p1, node_type="filter", account=None,
-            config={"filter_type": "by_sport", "sport": "cycling"},
-            position_x=360, position_y=160,
-        )
-        n_strava = PipelineNode.objects.create(
-            pipeline=p1, node_type="target", account=None,
-            config={}, position_x=640, position_y=80,
-        )
-        n_garmin = PipelineNode.objects.create(
-            pipeline=p1, node_type="target", account=None,
-            config={}, position_x=640, position_y=260,
-        )
-        PipelineEdge.objects.create(pipeline=p1, source_node=n_source, target_node=n_filter)
-        PipelineEdge.objects.create(pipeline=p1, source_node=n_filter, target_node=n_strava)
-        PipelineEdge.objects.create(pipeline=p1, source_node=n_filter, target_node=n_garmin)
+        garmin_acc.set_tokens("garmin-demo-token")
+        garmin_acc.save()
 
-        p2 = Pipeline.objects.create(
+        t1 = Pipeline.objects.create(
             user=user,
-            name="演示回环（Mock 目标）",
-            description="拉取演示码表活动，距离 ≥ 10km 的全部同步到 Mock 平台（可完整跑通）",
+            name="演示码表 → 演示平台（全量内容）",
+            description="拉取演示码表最近 30 天活动，并把个人资料 / 体重 / 睡眠一并同步（可完整跑通）",
             auto_run=False,
+            source_type="mock",
+            source_account=mock_acc,
+            sync_content=["activity", "profile", "weight", "sleep"],
+            time_range={"mode": "recent", "start": None, "end": None, "days": 30},
         )
-        m_source = PipelineNode.objects.create(
-            pipeline=p2, node_type="source", account=mock_acc,
-            config={}, position_x=100, position_y=140,
+        t1.target_accounts.set([mock_acc])
+        t1.ensure_defaults()
+        t1.save()
+        t1.rebuild_graph()
+
+        t2 = Pipeline.objects.create(
+            user=user,
+            name="FIT 记录 → 演示平台",
+            description="把本地导入的 FIT 记录（含采样点与 GPS 轨迹）同步出去，默认开启坐标纠偏与智能去重",
+            auto_run=False,
+            source_type="fit",
+            source_fit_detail=None,
+            sync_content=["activity", "summary", "samples", "track"],
+            time_range={"mode": "file", "start": None, "end": None, "days": 30},
         )
-        m_filter = PipelineNode.objects.create(
-            pipeline=p2, node_type="filter", account=None,
-            config={"filter_type": "by_distance", "min_distance": 10},
-            position_x=380, position_y=140,
+        t2.target_accounts.set([mock_acc])
+        t2.ensure_defaults()
+        t2.save()
+        t2.rebuild_graph()
+
+        t3 = Pipeline.objects.create(
+            user=user,
+            name="演示码表 → 佳明（含睡眠/体重）",
+            description="跨平台示例：佳明接口按官方文档适配后即可跑通；未实现的内容会记为「预留」并跳过",
+            auto_run=False,
+            source_type="mock",
+            source_account=mock_acc,
+            sync_content=["activity", "profile", "sleep", "weight"],
+            time_range={"mode": "recent", "start": None, "end": None, "days": 7},
         )
-        m_target = PipelineNode.objects.create(
-            pipeline=p2, node_type="target", account=mock_acc,
-            config={}, position_x=660, position_y=140,
-        )
-        PipelineEdge.objects.create(pipeline=p2, source_node=m_source, target_node=m_filter)
-        PipelineEdge.objects.create(pipeline=p2, source_node=m_filter, target_node=m_target)
+        t3.target_accounts.set([garmin_acc])
+        t3.ensure_defaults()
+        t3.save()
+        t3.rebuild_graph()
 
         self.stdout.write(self.style.SUCCESS("✅ 演示数据创建完成"))
         self.stdout.write("   登录账号: demo / demo123456（前台）  admin / admin123456（/admin/）")

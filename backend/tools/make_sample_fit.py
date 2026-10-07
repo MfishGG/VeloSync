@@ -21,7 +21,7 @@ from fitparse.profile import MESSAGE_TYPES  # type: ignore
 FIT_EPOCH = 631065600  # 1989-12-31 00:00:00 UTC
 SEMICIRCLE = 2**31 / 180.0
 
-RECORD_FIELDS = [
+RECORD_BASE_FIELDS = [
     "timestamp",
     "position_lat",
     "position_long",
@@ -32,6 +32,21 @@ RECORD_FIELDS = [
     "speed",
     "power",
 ]
+# 以下为"预留模块"字段：真实设备未必全写，这里一并造出来供前端图表验证；
+# with_extra=False 时只写基础字段，用于验证「无数据 → 空白图位」的表现
+RECORD_EXTRA_FIELDS = [
+    "grade",
+    "calories",
+    "left_torque_effectiveness",
+    "combined_pedal_smoothness",
+    "accumulated_power",
+    "saturated_hemoglobin_percent",
+    "vertical_oscillation",
+    "stance_time",
+    "step_length",
+]
+
+RECORD_FIELDS = RECORD_BASE_FIELDS + RECORD_EXTRA_FIELDS
 SESSION_FIELDS = [
     "timestamp",
     "start_time",
@@ -98,12 +113,12 @@ def _crc(data: bytes) -> int:
     return Crc(byte_arr=data).value
 
 
-def build_sample(count: int = 120, start: datetime | None = None) -> bytes:
+def build_sample(count: int = 120, start: datetime | None = None, with_extra: bool = True) -> bytes:
     """合成一段模拟骑行：心率 / 功率 / 踏频 / 速度 / 海拔 / GPS 均随时间变化"""
     start = start or datetime(2026, 10, 7, 6, 30, tzinfo=timezone.utc)
     start_fit = int(start.timestamp()) - FIT_EPOCH
 
-    rec_fields = _fields(20, RECORD_FIELDS)
+    rec_fields = _fields(20, RECORD_FIELDS if with_extra else RECORD_BASE_FIELDS)
     ses_fields = _fields(18, SESSION_FIELDS)
     fid_fields = _fields(0, FILE_ID_FIELDS)
 
@@ -140,6 +155,14 @@ def build_sample(count: int = 120, start: datetime | None = None) -> bytes:
         speeds.append(speed)
         alts.append(altitude)
 
+        # 进阶指标：温度随爬升略降、坡度取海拔变化率、扭矩效率/平顺度小幅波动
+        temperature = 24 + int(3 * math.sin(i / 17.0))
+        grade_pct = 6.0 * math.sin(i / 11.0)
+        calories = int(i * 0.16)
+        torque_eff = int(min(99, 62 + 6 * math.sin(i / 6.0)))
+        smoothness = int(min(99, 28 + 5 * math.sin(i / 8.0)))
+        smo2 = int(min(99, 68 + 7 * math.sin(i / 13.0)))
+
         body += _data(
             1,
             rec_fields,
@@ -153,6 +176,16 @@ def build_sample(count: int = 120, start: datetime | None = None) -> bytes:
                 "distance": int(round(distance_m * 100)),
                 "speed": int(round(speed * 1000)),
                 "power": power,
+                "temperature": temperature,
+                "grade": int(round(grade_pct * 100)),  # scale 100
+                "calories": calories,
+                "left_torque_effectiveness": int(round(torque_eff * 2)),  # scale 2
+                "combined_pedal_smoothness": int(round(smoothness * 2)),  # scale 2
+                "accumulated_power": int(power * (i + 1)),
+                "saturated_hemoglobin_percent": int(round(smo2 * 10)),  # scale 10
+                "vertical_oscillation": int(round((7.5 + 0.4 * math.sin(i / 5.0)) * 10)),  # mm, scale 10
+                "stance_time": int(round((240 + 8 * math.sin(i / 7.0)) * 10)),  # ms, scale 10
+                "step_length": int(round((950 + 20 * math.sin(i / 9.0)) * 10)),  # mm, scale 10
             },
         )
 
@@ -195,9 +228,11 @@ def build_sample(count: int = 120, start: datetime | None = None) -> bytes:
 def main() -> None:
     out = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).with_name("sample_ride.fit")
     count = int(sys.argv[2]) if len(sys.argv) > 2 else 120
-    data = build_sample(count)
+    with_extra = not (len(sys.argv) > 3 and sys.argv[3] == "basic")
+    data = build_sample(count, with_extra=with_extra)
     out.write_bytes(data)
-    print(f"已生成 {out}（{len(data)} 字节，{count} 个采样点）")
+    kind = "含全部预留字段" if with_extra else "仅基础字段"
+    print(f"已生成 {out}（{len(data)} 字节，{count} 个采样点，{kind}）")
 
 
 if __name__ == "__main__":

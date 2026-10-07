@@ -1,12 +1,11 @@
 """平台适配器层（Adapter）。
 
-每个平台一个适配器，实现统一的四个能力：
-- fetch_activities：拉取活动列表
-- download_fit：下载 FIT 原始文件
-- upload_fit：上传 FIT 文件
-- check_exists：按开始时间检查目标平台是否已有该活动
+每个平台一个适配器，实现统一的能力：
+- fetch_activities / download_fit / upload_fit / check_exists：运动记录同步
+- fetch_content / push_content：个人资料、训练课程、路线、体重、睡眠等账号类内容同步
 
 新增平台只需实现 BaseAdapter 并注册到 ADAPTERS，配置即接入。
+未实现的账号类内容会抛出 NotImplementedError，引擎记为「预留」并跳过，不会中断任务。
 """
 import hashlib
 import random
@@ -22,8 +21,15 @@ class AdapterError(Exception):
     """平台适配器执行异常。"""
 
 
+class ContentNotSupported(NotImplementedError):
+    """平台未实现某种账号类内容的同步（引擎记为预留）。"""
+
+
 class BaseAdapter(ABC):
     code = "base"
+
+    #: 该平台支持的账号类内容（运动记录之外的 profile / course / route / weight / sleep …）
+    CONTENT_SUPPORT: set[str] = set()
 
     def __init__(self, account: PlatformAccount):
         self.account = account
@@ -40,12 +46,25 @@ class BaseAdapter(ABC):
     @abstractmethod
     def check_exists(self, start_timestamp): ...
 
+    # ---------- 账号类内容 ----------
+    def supports_content(self, key: str) -> bool:
+        return key in self.CONTENT_SUPPORT
+
+    def fetch_content(self, key: str, since=None, until=None) -> dict:
+        """从来源账号拉取某类内容。默认未实现。"""
+        raise ContentNotSupported(f"{self.account.platform.name} 暂不支持拉取「{key}」")
+
+    def push_content(self, key: str, payload: dict) -> str:
+        """把某类内容写入目标账号，返回远端标识。默认未实现。"""
+        raise ContentNotSupported(f"{self.account.platform.name} 暂不支持写入「{key}」")
+
 
 class MockAdapter(BaseAdapter):
     """演示适配器：确定性伪随机数据，可完整跑通“拉取 → 过滤 → 上传”。"""
 
     code = "mock"
     SPORTS = ["cycling", "running", "hiking", "swimming"]
+    CONTENT_SUPPORT = {"profile", "course", "route", "weight", "sleep", "health", "workout"}
 
     def fetch_activities(self, since=None) -> list[dict]:
         rng = random.Random(self.account.id)
@@ -83,6 +102,44 @@ class MockAdapter(BaseAdapter):
     def check_exists(self, start_timestamp):
         return None
 
+    # ---------- 账号类内容（演示数据，便于完整跑通同步链路） ----------
+    def fetch_content(self, key: str, since=None, until=None) -> dict:
+        rng = random.Random(f"{self.account.id}-{key}")
+        days = 7 if key in ("sleep", "weight", "health") else 5
+        base = since or (timezone.now() - timedelta(days=days))
+        items = []
+        for i in range(days):
+            day = (base + timedelta(days=i)).date().isoformat()
+            if key == "profile":
+                items = [{"nickname": self.account.display_name or "demo", "weight_kg": 65.5, "height_cm": 175}]
+                break
+            if key == "weight":
+                items.append({"date": day, "weight_kg": round(64 + rng.random() * 2, 1)})
+            elif key == "sleep":
+                items.append(
+                    {
+                        "date": day,
+                        "duration_min": 380 + rng.randint(-60, 60),
+                        "deep_min": 70 + rng.randint(0, 40),
+                        "rem_min": 80 + rng.randint(0, 30),
+                    }
+                )
+            elif key == "health":
+                items.append(
+                    {"date": day, "steps": 6000 + rng.randint(0, 9000), "resting_hr": 48 + rng.randint(0, 12)}
+                )
+            elif key == "course":
+                items.append({"name": f"课程 {i + 1}", "duration_min": 30 + rng.randint(0, 60)})
+            elif key == "route":
+                items.append({"name": f"路线 {i + 1}", "distance_km": round(20 + rng.random() * 60, 1)})
+            elif key == "workout":
+                items.append({"date": day, "name": f"训练计划 {i + 1}", "type": self.SPORTS[rng.randrange(4)]})
+        return {"key": key, "items": items}
+
+    def push_content(self, key: str, payload: dict) -> str:
+        count = len((payload or {}).get("items") or [])
+        return f"mock-{key}-{hashlib.md5(f'{key}{count}{self.account.id}'.encode()).hexdigest()[:10]}"
+
 
 class OAuthAdapter(BaseAdapter):
     """
@@ -95,11 +152,22 @@ class OAuthAdapter(BaseAdapter):
 
     def _require_config(self):
         platform = self.account.platform
-        if not platform.api_base or not self.account.get_access_token():
+        # 演示身份：先在「账号管理」或本地凭证配置之前以演示身份绑定过
+        if self.account.is_demo:
             raise AdapterError(
-                f"{platform.name} 的 API 凭证尚未配置或账号未授权，"
-                "请在平台表补充 client_id / api_base 并完成 OAuth 绑定"
+                f"{platform.name} 当前绑定的是本地【演示身份】，未接入真实平台，无法拉取/上传数据。"
+                "请先在平台表配置 OAuth 凭证，再到「账号管理」重新授权"
             )
+        missing = platform.oauth_missing
+        if missing:
+            raise AdapterError(
+                f"{platform.name} 尚未配置 OAuth 凭证（{'、'.join(missing)}），"
+                "请在平台表补充，或执行 python manage.py set_platform_oauth --list 查看各平台状态"
+            )
+        if not platform.api_base:
+            raise AdapterError(f"{platform.name} 尚未配置 api_base（接口地址），请在平台表补充")
+        if not self.account.get_access_token():
+            raise AdapterError(f"{platform.name} 的账号未授权或 Token 已失效，请在「账号管理」重新授权")
 
     def fetch_activities(self, since=None) -> list[dict]:
         self._require_config()

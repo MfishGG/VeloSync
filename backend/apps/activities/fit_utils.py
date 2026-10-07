@@ -42,13 +42,29 @@ SEMICIRCLE = 2**31 / 180.0  # FIT 坐标换算系数
 MAX_SAMPLES = 30000  # 采样点上限（保留全部原始点；仅超长活动才抽稀，约 8 小时 1Hz 记录）
 MAX_TRACK = 30000  # 轨迹点上限（与采样同源，独立保留含 GPS 的点）
 
-# 各指标的合理区间，用于过滤无效值（FIT 用 0xFF / 0xFFFF 表示"无数据"）
-RANGES = {
-    "heart_rate": (20, 250),
-    "power": (0, 3000),
-    "cadence": (0, 250),
-    "speed": (0, 100),  # m/s
-    "altitude": (-1000, 10000),  # m
+# 采样指标注册表：输出键 -> (候选 FIT 字段名, 换算系数, 有效区间(原始单位), 保留小数位)
+#
+# fitparse 已按 profile 应用 scale/offset，因此这里拿到的值已是物理单位
+# （速度 m/s、海拔 m、坡度 %、垂直振幅 mm、触地时间 ms、步幅 mm …），
+# 仅速度需要 ×3.6 转 km/h。区间用于过滤 FIT 的"无数据"哨兵值（0xFF / 0xFFFF…）。
+#
+# 前端按此表的顺序渲染图表：文件里没有的指标也会保留槽位，只是画成空白图。
+METRIC_SPEC: dict[str, tuple[tuple[str, ...], float, tuple[float, float], int]] = {
+    "heart_rate": (("heart_rate",), 1.0, (20, 250), 0),
+    "power": (("power",), 1.0, (0, 3000), 0),
+    "cadence": (("cadence",), 1.0, (0, 250), 0),
+    "speed_kmh": (("enhanced_speed", "speed"), 3.6, (0, 100), 2),  # 原始为 m/s
+    "altitude": (("enhanced_altitude", "altitude"), 1.0, (-1000, 10000), 1),
+    "grade": (("grade",), 1.0, (-100, 100), 1),
+    "temperature": (("temperature",), 1.0, (-60, 80), 1),
+    "calories": (("calories",), 1.0, (0, 100000), 0),
+    "vertical_oscillation": (("vertical_oscillation",), 1.0, (0, 500), 1),
+    "stance_time": (("stance_time",), 1.0, (0, 2000), 0),
+    "step_length": (("step_length",), 1.0, (0, 5000), 0),
+    "muscle_oxygen": (("saturated_hemoglobin_percent",), 1.0, (0, 100), 1),
+    "pedal_smoothness": (("combined_pedal_smoothness", "left_pedal_smoothness"), 1.0, (0, 100), 1),
+    "torque_effectiveness": (("left_torque_effectiveness",), 1.0, (0, 100), 1),
+    "accumulated_power": (("accumulated_power",), 1.0, (0, 1_000_000_000), 0),
 }
 
 # FIT SDK 的 CRC 查表（反射 CRC-16，与 fitparse 一致）
@@ -62,15 +78,15 @@ class FitParseUnavailable(RuntimeError):
     """fitparse 未安装"""
 
 
-def _clean(value, key: str):
-    """过滤无效/越界数值"""
+def _clean(value, rng: tuple[float, float] = (-1e9, 1e9)):
+    """过滤无效/越界数值（FIT 用 0xFF / 0xFFFF 等哨兵值表示"无数据"）"""
     if value is None:
         return None
     try:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    low, high = RANGES.get(key, (-1e9, 1e9))
+    low, high = rng
     return None if number < low or number > high else number
 
 
@@ -119,6 +135,19 @@ def _fill_distance(samples: list[dict]) -> None:
             cumulative += _haversine_m(prev["lat"], prev["lng"], s["lat"], s["lng"])
         s["distance_km"] = round(cumulative / 1000, 4)
         prev = s
+
+
+def _metric_stats(samples: list[dict], key: str) -> dict:
+    """单指标统计：有效点数 / 平均 / 最大 / 最小（无数据则全为 0 / None）"""
+    values = [s.get(key) for s in samples if s.get(key) is not None]
+    if not values:
+        return {"count": 0, "avg": None, "max": None, "min": None}
+    return {
+        "count": len(values),
+        "avg": round(sum(values) / len(values), 1),
+        "max": round(max(values), 1),
+        "min": round(min(values), 1),
+    }
 
 
 def _normalized_power(powers: list[float]) -> float | None:
@@ -170,29 +199,29 @@ def parse_fit_file(data: bytes) -> dict:
         raise ValueError("FIT 文件中没有 record / session 数据，可能不是活动文件")
 
     # ---- 采样点（先全量保留，最后才按需抽稀） ----
+    # 所有 METRIC_SPEC 中的指标都会预留字段，文件里没有的会在统计后剔除
     start_dt: datetime | None = None
     samples: list[dict] = []
     for raw in records:
         ts = raw.get("timestamp")
         if isinstance(ts, datetime) and start_dt is None:
             start_dt = ts
-        lat = _to_degrees(raw.get("position_lat"))
-        lng = _to_degrees(raw.get("position_long"))
-        speed = _clean(raw.get("speed"), "speed")
-        samples.append(
-            {
-                "t": int((ts - start_dt).total_seconds()) if isinstance(ts, datetime) and start_dt else None,
-                "distance_km": 0.0,  # 下面统一补全
-                "speed_kmh": round(speed * 3.6, 2) if speed is not None else None,
-                "heart_rate": _clean(raw.get("heart_rate"), "heart_rate"),
-                "power": _clean(raw.get("power"), "power"),
-                "cadence": _clean(raw.get("cadence"), "cadence"),
-                "altitude": _clean(raw.get("altitude"), "altitude"),
-                "lat": lat,
-                "lng": lng,
-                "_raw_distance": raw.get("distance"),  # 临时字段，补全后移除
-            }
-        )
+        row: dict = {
+            "t": int((ts - start_dt).total_seconds()) if isinstance(ts, datetime) and start_dt else None,
+            "distance_km": 0.0,  # 下面统一补全
+            "lat": _to_degrees(raw.get("position_lat")),
+            "lng": _to_degrees(raw.get("position_long")),
+            "_raw_distance": raw.get("distance"),  # 临时字段，补全后移除
+        }
+        for key, (names, factor, rng, digits) in METRIC_SPEC.items():
+            value = None
+            for name in names:
+                candidate = _clean(raw.get(name), rng)
+                if candidate is not None:
+                    value = candidate
+                    break
+            row[key] = round(value * factor, digits) if value is not None else None
+        samples.append(row)
     raw_count = len(samples)
     _fill_distance(samples)
 
@@ -258,6 +287,14 @@ def parse_fit_file(data: bytes) -> dict:
         avg_speed = round(avg_speed * 3.6, 2)
         max_speed = round(max_speed * 3.6, 2) if max_speed is not None else None
 
+    # ---- 各指标统计：前端据此决定画曲线还是留空白槽位 ----
+    metrics = {key: _metric_stats(samples, key) for key in METRIC_SPEC}
+    # 文件里完全没有的指标，从采样点中剔除该键（避免 JSON 里塞满 null）
+    for key, stat in metrics.items():
+        if stat["count"] == 0:
+            for s in samples:
+                s.pop(key, None)
+
     if start_dt is None and isinstance(session.get("start_time"), datetime):
         start_dt = session["start_time"]
 
@@ -285,6 +322,18 @@ def parse_fit_file(data: bytes) -> dict:
         "raw_track_count": raw_track_count,
         "downsampled": samples_downsampled or raw_track_count > len(track),
         "has_gps": bool(track),
+        # ---- 预留模块：全部指标槽位 + 该文件实际含有哪些指标 ----
+        "metrics": metrics,
+        "available_metrics": [key for key, stat in metrics.items() if stat["count"] > 0],
+        # ---- session 里可能带有的进阶指标（没有则为 None） ----
+        "threshold_power": session.get("threshold_power"),
+        "training_stress_score": session.get("training_stress_score"),
+        "intensity_factor": session.get("intensity_factor"),
+        "total_training_effect": session.get("total_training_effect"),
+        "total_cycles": session.get("total_cycles"),
+        "avg_temperature": session.get("avg_temperature") or metrics["temperature"]["avg"],
+        "max_temperature": session.get("max_temperature") or metrics["temperature"]["max"],
+        "avg_grade": metrics["grade"]["avg"],
     }
 
     return {

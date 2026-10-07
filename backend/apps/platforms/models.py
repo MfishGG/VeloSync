@@ -19,6 +19,21 @@ class Platform(models.Model):
     capabilities = models.JSONField(
         "能力（fetch/upload）", default=dict, blank=True
     )
+    # ---- 移动端（小程序 → 官方 App）绑定渠道 ----
+    miniprogram_appid = models.CharField(
+        "官方微信小程序 AppID",
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="小程序内用 wx.navigateToMiniProgram 跳转该平台官方小程序完成授权绑定",
+    )
+    app_scheme = models.CharField(
+        "官方 App URL Scheme",
+        max_length=128,
+        blank=True,
+        default="",
+        help_text="跳官方小程序不可用时的兜底：复制该 scheme 到系统浏览器即可唤起官方 App",
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -27,8 +42,53 @@ class Platform(models.Model):
         verbose_name_plural = "平台"
         ordering = ["id"]
 
+    #: 走真实 OAuth 时必须齐备的字段（按优先级列出，用于提示"还缺什么"）
+    CREDENTIAL_FIELDS = ("authorize_url", "token_url", "client_id")
+
+    #: 字段 → 中文说明，供前端与日志展示
+    CREDENTIAL_LABELS = {
+        "authorize_url": "授权地址 authorize_url",
+        "token_url": "令牌地址 token_url",
+        "client_id": "客户端 ID client_id",
+    }
+
     def __str__(self):
         return self.name
+
+    @property
+    def oauth_missing(self) -> list[str]:
+        """返回尚未配置的凭证字段；演示平台无需凭证，恒为空。"""
+        if self.auth_type == "mock":
+            return []
+        return [f for f in self.CREDENTIAL_FIELDS if not getattr(self, f, "")]
+
+    @property
+    def oauth_ready(self) -> bool:
+        """凭证是否齐备（齐备才允许跳转真实授权页）。"""
+        return not self.oauth_missing
+
+    @property
+    def credential_hint(self) -> str:
+        """给用户看的下一步提示。"""
+        if self.auth_type == "mock":
+            return "演示平台无需凭证，可直接绑定"
+        if self.oauth_ready:
+            return "凭证已配置，可跳转平台授权页"
+        return "未配置 " + "、".join(self.CREDENTIAL_LABELS[f] for f in self.oauth_missing) + "，可先以演示身份绑定"
+
+    @property
+    def mobile_bind_channel(self) -> str:
+        """移动端优先使用的绑定渠道。
+
+        - `miniprogram`：已登记官方小程序 AppID，可小程序内直接跳转
+        - `app`：只有 URL Scheme，需复制链接到浏览器唤起官方 App
+        - `demo`：两者都缺，只能以演示身份绑定
+        """
+        if self.miniprogram_appid:
+            return "miniprogram"
+        if self.app_scheme:
+            return "app"
+        return "demo"
 
 
 class PlatformAccount(models.Model):
@@ -60,6 +120,15 @@ class PlatformAccount(models.Model):
 
     def __str__(self):
         return f"{self.platform.name} · {self.display_name or self.platform_user_id}"
+
+    @property
+    def is_demo(self) -> bool:
+        """是否为本地演示身份（未接入真实平台）。
+
+        `mock-` 为演示平台账号，`demo-` 为未配置 OAuth 凭证时以演示身份绑定的账号，
+        二者都拿不到真实的平台数据。
+        """
+        return self.platform_user_id.startswith(("mock-", "demo-"))
 
     # ---- Token 加密存取 ----
     def set_tokens(self, access: str, refresh: str = "") -> None:

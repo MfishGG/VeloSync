@@ -50,6 +50,32 @@ class PlatformAccountViewSet(viewsets.ModelViewSet):
         instance.delete()
 
 
+def demo_bind(platform: Platform, user) -> tuple[PlatformAccount, bool]:
+    """未配置 OAuth 凭证时的**本地演示绑定**。
+
+    真实接入需要去各平台开放平台申请应用（client_id / client_secret），
+    在拿到凭证之前，用这个入口签发一个演示 Token，让「绑定 → 建同步任务 → 运行 → 看日志」
+    的整条链路可以完整跑通（平台侧不会收到真实请求）。
+    """
+    account, created = PlatformAccount.objects.update_or_create(
+        user=user,
+        platform=platform,
+        platform_user_id=f"demo-{platform.code}-{user.id}",
+        defaults={"status": "active", "display_name": f"{platform.name} 演示账号"},
+    )
+    account.set_tokens(f"demo-token-{uuid.uuid4().hex[:12]}")
+    account.save()
+    SyncLog.objects.create(
+        user=user,
+        level="warning",
+        message=(
+            f"{platform.name} 未配置 OAuth 凭证，已按【演示身份】绑定（仅用于本地体验，"
+            f"无法真实拉取/上传数据）"
+        ),
+    )
+    return account, created
+
+
 class AuthorizeView(APIView):
     """GET /api/accounts/{platform}/authorize/ —— 获取 OAuth 授权 URL"""
 
@@ -73,9 +99,24 @@ class AuthorizeView(APIView):
                 account.save()
             return Response({"authorize_url": None, "mock": True, "account_id": account.id})
 
-        if not platform.authorize_url or not platform.client_id:
+        # 凭证不齐：返回结构化错误，前端据此引导「以演示身份绑定」
+        if not platform.oauth_ready:
             return Response(
-                {"detail": f"{platform.name} 尚未配置 OAuth 凭证（authorize_url / client_id），请在平台数据中补充"},
+                {
+                    "code": "oauth_not_configured",
+                    "detail": (
+                        f"{platform.name} 尚未配置 OAuth 凭证（"
+                        + "、".join(platform.oauth_missing)
+                        + "），请在平台数据中补充，或先以演示身份绑定"
+                    ),
+                    "platform": platform.code,
+                    "platform_name": platform.name,
+                    "missing": platform.oauth_missing,
+                    "missing_labels": [
+                        Platform.CREDENTIAL_LABELS[f] for f in platform.oauth_missing
+                    ],
+                    "can_demo_bind": True,
+                },
                 status=400,
             )
 
@@ -90,6 +131,34 @@ class AuthorizeView(APIView):
         }
         query = "&".join(f"{k}={requests.utils.quote(str(v))}" for k, v in params.items())
         return Response({"authorize_url": f"{platform.authorize_url}?{query}", "state": state})
+
+
+class DemoBindView(APIView):
+    """POST /api/accounts/{platform}/demo-bind/ —— 未配置凭证时以演示身份绑定"""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, code: str):
+        platform = Platform.objects.filter(code=code, is_active=True).first()
+        if platform is None:
+            return Response({"detail": f"平台 {code} 不存在"}, status=400)
+        if platform.auth_type == "mock":
+            return Response({"detail": f"{platform.name} 是演示平台，直接点「绑定账号」即可"}, status=400)
+        if platform.oauth_ready:
+            return Response(
+                {"detail": f"{platform.name} 已配置 OAuth 凭证，请走正常授权流程"},
+                status=400,
+            )
+        account, created = demo_bind(platform, request.user)
+        return Response(
+            {
+                "account_id": account.id,
+                "created": created,
+                "demo": True,
+                "detail": f"已以演示身份绑定 {platform.name}（本地体验用）",
+            },
+            status=201 if created else 200,
+        )
 
 
 class CallbackView(APIView):
