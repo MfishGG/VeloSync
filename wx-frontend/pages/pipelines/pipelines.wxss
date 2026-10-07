@@ -1,0 +1,92 @@
+.head {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  padding: 8rpx 8rpx 28rpx;
+}
+.head__title {
+  font-size: 38rpx;
+  font-weight: 700;
+}
+.head__sub {
+  font-size: 22rpx;
+  color: var(--t3);
+  margin-top: 4rpx;
+}
+
+/* 任务卡 */
+.task:active {
+  background: #fdfdfe;
+}
+.task__name {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--t1);
+}
+.task__desc {
+  font-size: 22rpx;
+  color: var(--t3);
+  margin-top: 4rpx;
+}
+.status {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  font-size: 22rpx;
+  flex-shrink: 0;
+  margin-left: 16rpx;
+}
+.status__dot {
+  width: 14rpx;
+  height: 14rpx;
+  border-radius: 50%;
+}
+
+/* 流转路径 */
+.flow {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  margin-top: 18rpx;
+}
+.flow__node {
+  flex-shrink: 0;
+  max-width: 44%;
+  padding: 10rpx 18rpx;
+  border-radius: 14rpx;
+  font-size: 23rpx;
+  background: #eef2ff;
+  color: #4338ca;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.flow__node--target {
+  background: #ecfdf5;
+  color: #047857;
+}
+.flow__arrow {
+  color: var(--t3);
+  font-size: 26rpx;
+  flex-shrink: 0;
+}
+
+.task__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  font-size: 22rpx;
+  color: var(--t3);
+  margin-top: 16rpx;
+}
+
+.task__actions {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 20rpx;
+  padding-top: 20rpx;
+  border-top: 2rpx solid var(--line-soft);
+}
+.task__actions .btn {
+  flex: 1;
+}

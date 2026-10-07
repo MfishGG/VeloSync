@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "新建同步任务",
+  "usingComponents": {
+    "sync-form": "../../components/sync-form/index"
+  }
+}

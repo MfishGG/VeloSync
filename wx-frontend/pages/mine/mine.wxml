@@ -1,0 +1,124 @@
+<view class="page page--tabbed">
+  <!-- 用户卡 -->
+  <view class="profile">
+    <view class="profile__avatar-wrap">
+      <image
+        wx:if="{{avatarUrl}}"
+        class="profile__avatar"
+        src="{{avatarUrl}}"
+        mode="aspectFill"
+        binderror="onAvatarError"
+      />
+      <view wx:else class="profile__avatar profile__avatar--fallback">
+        <image class="profile__avatar-logo" src="/assets/brand/logo-96.png" mode="aspectFit" />
+      </view>
+    </view>
+    <view class="grow">
+      <view class="profile__name ellipsis">{{user.nickname || user.username || '骑行爱好者'}}</view>
+      <view class="profile__sub ellipsis">
+        {{wx.connected ? '微信' + (wx.real ? '已授权' : '演示身份') : '@' + (user.username || '')}}
+      </view>
+    </view>
+  </view>
+
+  <!-- 微信账号信息 -->
+  <view class="wx-card" wx:if="{{wx.connected}}">
+    <view class="wx-card__head">
+      <text class="wx-card__dot"></text>
+      <text class="wx-card__title">微信账号</text>
+      <text class="wx-card__badge {{wx.real ? '' : 'wx-card__badge--mock'}}">
+        {{wx.real ? '真实登录' : '演示身份'}}
+      </text>
+    </view>
+
+    <view class="wx-row">
+      <view class="wx-row__label">昵称</view>
+      <view class="wx-row__value ellipsis">{{wx.nickname || '—'}}</view>
+    </view>
+
+    <view class="wx-row" wx:if="{{wx.unionid}}">
+      <view class="wx-row__label">UnionID</view>
+      <view class="wx-row__value wx-row__value--mono ellipsis" bindtap="copyId" data-id="{{wx.unionid}}">
+        {{wx.unionid}}
+      </view>
+    </view>
+
+    <view class="wx-row">
+      <view class="wx-row__label">OpenID</view>
+      <view class="wx-row__value wx-row__value--mono ellipsis" bindtap="copyId" data-id="{{wx.openid}}">
+        {{wx.openid}}
+      </view>
+    </view>
+
+    <view class="wx-row" wx:if="{{wx.boundAt}}">
+      <view class="wx-row__label">绑定时间</view>
+      <view class="wx-row__value">{{wx.boundAt}}</view>
+    </view>
+
+    <view class="wx-card__tip">点击 ID 可复制</view>
+  </view>
+
+  <!-- 未绑定时给出说明 -->
+  <view class="wx-card wx-card--empty" wx:else>
+    <view class="wx-card__head">
+      <text class="wx-card__dot wx-card__dot--off"></text>
+      <text class="wx-card__title">微信账号</text>
+    </view>
+    <view class="wx-card__tip">
+      当前账号未绑定微信。退出后使用「微信一键登录」，即可自动建立并绑定微信身份。
+    </view>
+  </view>
+
+  <!-- 概览 -->
+  <view class="mini-stats">
+    <view class="mini-stat">
+      <view class="mini-stat__value">{{accountCount}}</view>
+      <view class="mini-stat__label">已绑定账号</view>
+    </view>
+    <view class="mini-stat">
+      <view class="mini-stat__value">{{platformCount}}</view>
+      <view class="mini-stat__label">支持平台</view>
+    </view>
+  </view>
+
+  <!-- 功能入口 -->
+  <view class="menu">
+    <view class="menu__item" bindtap="goAccounts">
+      <view class="menu__icon menu__icon--primary">🔗</view>
+      <view class="grow">
+        <view class="menu__title">账号管理</view>
+        <view class="menu__desc">绑定 iGPSPORT / 佳明 / Strava / COROS</view>
+      </view>
+      <view class="menu__extra">{{accountCount}} 个</view>
+      <view class="menu__arrow">›</view>
+    </view>
+
+    <view class="menu__item" bindtap="goLogs">
+      <view class="menu__icon menu__icon--warning">📜</view>
+      <view class="grow">
+        <view class="menu__title">同步日志</view>
+        <view class="menu__desc">按级别与任务筛选，排查失败原因</view>
+      </view>
+      <view class="menu__arrow">›</view>
+    </view>
+
+    <view class="menu__item" bindtap="goSettings">
+      <view class="menu__icon menu__icon--muted">⚙️</view>
+      <view class="grow">
+        <view class="menu__title">设置</view>
+        <view class="menu__desc">接口地址、缓存、关于</view>
+      </view>
+      <view class="menu__arrow">›</view>
+    </view>
+  </view>
+
+  <view class="btn btn--danger-soft btn--block" bindtap="onLogout" style="margin-top:24rpx">
+    退出登录
+  </view>
+
+  <view class="t-xs t3" style="text-align:center;margin-top:24rpx">
+    VeloSync 速同 · v{{version}}
+  </view>
+
+  <view class="safe-bottom"></view>
+</view>

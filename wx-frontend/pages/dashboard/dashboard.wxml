@@ -1,0 +1,83 @@
+<view class="page page--tabbed">
+  <view class="hello">
+    <view class="grow">
+      <view class="hello__hi">你好，{{user.nickname || user.username || '骑友'}}</view>
+      <view class="hello__sub">这是你的跨平台同步总览</view>
+    </view>
+    <image class="brand-mark" src="/assets/brand/logo-96.png" mode="aspectFit" />
+  </view>
+
+  <view class="alert alert--danger" wx:if="{{error}}">{{error}}</view>
+  <view class="loading" wx:if="{{loading && !stats}}"><view class="spinner"></view></view>
+
+  <block wx:if="{{stats}}">
+    <!-- 统计卡 -->
+    <view class="stats">
+      <view class="stat stat--{{item.tint}}" wx:for="{{cards}}" wx:key="label">
+        <view class="stat__value">{{item.value}}<text class="stat__unit">{{item.unit}}</text></view>
+        <view class="stat__label">{{item.label}}</view>
+      </view>
+    </view>
+
+    <!-- 平台分布 -->
+    <view class="card" style="position: relative; left: 0rpx; top: 21rpx">
+      <view class="row-between">
+        <view class="card__title">平台分布</view>
+        <text class="t-xs t3">{{distribution.length}} 个平台</text>
+      </view>
+      <canvas type="2d" id="pieChart" class="chart chart--pie"></canvas>
+      <view class="legend">
+        <view class="legend__item" wx:for="{{distribution}}" wx:key="name">
+          <view class="legend__dot" style="background:{{index === 0 ? '#4f46e5' : index === 1 ? '#0ea5e9' : index === 2 ? '#10b981' : index === 3 ? '#f59e0b' : '#ef4444'}}"></view>
+          <text class="legend__name ellipsis">{{item.name}}</text>
+          <text class="legend__val">{{item.value}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 30 天趋势 -->
+    <view class="card" style="position: relative; left: 0rpx; top: 40rpx">
+      <view class="row-between">
+        <view class="card__title">近 30 天活动</view>
+        <text class="t-xs t3">共 {{trend.length}} 天有记录</text>
+      </view>
+      <canvas type="2d" id="trendChart" class="chart chart--trend"></canvas>
+    </view>
+
+    <!-- 最近同步 -->
+    <view class="card" style="position: relative; left: 0rpx; top: 50rpx">
+      <view class="card__title">最近同步</view>
+      <view class="empty" wx:if="{{recent.length === 0}}">
+        <view class="empty__icon">🗂</view>还没有同步记录，去「同步任务」跑一次试试
+      </view>
+      <view class="recent" wx:else>
+        <view class="recent__item" wx:for="{{recent}}" wx:key="activity_id">
+          <view class="recent__dot"></view>
+          <view class="grow">
+            <view class="recent__name ellipsis">{{item.activity}}</view>
+            <view class="recent__meta">→ {{item.platform}} · {{item.synced_at}}</view>
+          </view>
+          <text class="t-xs t3 mono">#{{item.activity_id}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 快捷入口 -->
+    <view class="quick">
+      <view class="quick__item" bindtap="goPipelines" style="position: relative; left: 0rpx; top: 90rpx">
+        <view class="quick__icon">⇄</view>
+        <view class="quick__label">同步任务</view>
+      </view>
+      <view class="quick__item" bindtap="goMatrix" style="position: relative; left: 1rpx; top: 90rpx">
+        <view class="quick__icon">▦</view>
+        <view class="quick__label">活动矩阵</view>
+      </view>
+      <view class="quick__item" bindtap="goFit" style="position: relative; left: 1rpx; top: 90rpx">
+        <view class="quick__icon">↗</view>
+        <view class="quick__label">FIT 解析</view>
+      </view>
+    </view>
+  </block>
+
+  
+</view>

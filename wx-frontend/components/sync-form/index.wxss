@@ -1,0 +1,78 @@
+@import "../../styles/common.wxss";
+
+/* ---------- 同步任务表单 ---------- */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+}
+
+.section {
+  background: #fff;
+  border-radius: 24rpx;
+  padding: 26rpx;
+  box-shadow: 0 2rpx 10rpx rgba(15, 23, 42, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+}
+.section__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16rpx;
+}
+.section__bar {
+  width: 8rpx;
+  height: 34rpx;
+  border-radius: 4rpx;
+  background: var(--primary);
+  flex-shrink: 0;
+  margin-top: 4rpx;
+}
+.section__title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--t1);
+}
+.section__hint {
+  font-size: 22rpx;
+  color: var(--t3);
+  margin-top: 4rpx;
+  line-height: 1.5;
+}
+
+.field__desc {
+  font-size: 21rpx;
+  color: var(--t3);
+  line-height: 1.5;
+}
+
+/* 勾选项 */
+.opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 14rpx;
+  padding: 16rpx 0;
+  border-bottom: 2rpx solid var(--line-soft);
+}
+.opt:last-child {
+  border-bottom: none;
+}
+.opt__body {
+  flex: 1;
+  min-width: 0;
+}
+.opt__title {
+  font-size: 26rpx;
+  color: var(--t1);
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  flex-wrap: wrap;
+}
+.opt__desc {
+  font-size: 21rpx;
+  color: var(--t3);
+  margin-top: 4rpx;
+  line-height: 1.5;
+}

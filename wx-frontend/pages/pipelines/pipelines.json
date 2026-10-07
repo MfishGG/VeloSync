@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "同步任务",
+  "enablePullDownRefresh": true,
+  "backgroundTextStyle": "dark",
+  "usingComponents": {}
+}

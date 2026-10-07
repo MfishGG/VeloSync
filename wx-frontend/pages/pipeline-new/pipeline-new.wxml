@@ -1,0 +1,89 @@
+<view class="page">
+  <!-- 步骤条 -->
+  <view class="steps">
+    <view
+      class="step {{index <= step ? 'step--on' : ''}}"
+      wx:for="{{steps}}"
+      wx:key="key"
+      data-index="{{index}}"
+      bindtap="goStep"
+    >
+      <view class="step__dot">{{index + 1}}</view>
+      <view class="step__label">{{item.label}}</view>
+    </view>
+  </view>
+
+  <view class="alert alert--danger" wx:if="{{error}}">{{error}}</view>
+  <view class="loading" wx:if="{{loading}}"><view class="spinner"></view></view>
+
+  <block wx:if="{{config}}">
+    <!-- 第 1 步：任务基本信息 -->
+    <view class="card stack" wx:if="{{step === 0}}">
+      <view class="field">
+        <view class="field__label">任务名称<text class="field__req">*</text></view>
+        <input
+          class="input"
+          value="{{config.name}}"
+          data-field="name"
+          bindinput="onInput"
+          placeholder="如：FIT 记录 → 佳明"
+          placeholder-class="placeholder"
+        />
+      </view>
+      <view class="field">
+        <view class="field__label">描述</view>
+        <input
+          class="input"
+          value="{{config.description}}"
+          data-field="description"
+          bindinput="onInput"
+          placeholder="选填，一句话说明这条任务做什么"
+          placeholder-class="placeholder"
+        />
+      </view>
+      <view class="switch-row">
+        <view class="switch-row__text">
+          <view class="t-md t1">创建后立即启用</view>
+          <view class="t-xs t3">停用的任务不会被执行</view>
+        </view>
+        <switch
+          checked="{{config.is_active}}"
+          color="#4f46e5"
+          data-field="is_active"
+          bindchange="onSwitch"
+        />
+      </view>
+    </view>
+
+    <!-- 结构化配置 -->
+    <sync-form
+      spec="{{spec}}"
+      value="{{config}}"
+      step="{{steps[step].key}}"
+      bindchange="onFormChange"
+    />
+
+    <!-- 当前步骤未满足的条件 -->
+    <view class="alert alert--warning" wx:if="{{stepProblems.length}}">
+      <view wx:for="{{stepProblems}}" wx:key="*this">· {{item}}</view>
+    </view>
+
+    <!-- 操作条 -->
+    <view class="wizard-actions">
+      <view class="btn btn--ghost" wx:if="{{step > 0}}" bindtap="prev">上一步</view>
+      <view class="btn btn--soft" wx:if="{{step === steps.length - 1}}" bindtap="runPreview">
+        {{previewing ? '预览中…' : '试运行预览'}}
+      </view>
+      <view class="btn btn--primary grow" wx:if="{{step < steps.length - 1}}" bindtap="next">下一步</view>
+      <view class="btn btn--primary grow" wx:else bindtap="submit">
+        {{submitting ? '创建中…' : '创建任务'}}
+      </view>
+    </view>
+
+    <view class="t-xs t3" style="text-align:center;padding:8rpx 0">
+      第 {{step + 1}} / {{steps.length}} 步
+    </view>
+  </block>
+
+  <view class="safe-bottom"></view>
+</view>

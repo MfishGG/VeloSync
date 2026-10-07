@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "同步日志",
+  "enablePullDownRefresh": true,
+  "backgroundTextStyle": "dark",
+  "usingComponents": {}
+}

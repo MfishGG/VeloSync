@@ -1,0 +1,56 @@
+.head {
+  padding: 8rpx 8rpx 24rpx;
+}
+.head__title {
+  font-size: 38rpx;
+  font-weight: 700;
+}
+.head__sub {
+  font-size: 22rpx;
+  color: var(--t3);
+  margin-top: 6rpx;
+  line-height: 1.5;
+}
+
+.card + .card {
+  margin-top: 24rpx;
+}
+
+/* 平台卡 */
+.pcard {
+  border: 2rpx solid var(--line);
+  border-radius: 20rpx;
+  padding: 22rpx;
+  margin-top: 18rpx;
+}
+.pcard__logo {
+  width: 68rpx;
+  height: 68rpx;
+  border-radius: 18rpx;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 30rpx;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.pcard__hint {
+  font-size: 21rpx;
+  color: var(--warning);
+  margin-top: 12rpx;
+  line-height: 1.5;
+}
+
+/* 已绑定账号 */
+.acc {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  padding: 22rpx 0;
+  border-bottom: 2rpx solid var(--line-soft);
+}
+.acc:last-child {
+  border-bottom: none;
+}

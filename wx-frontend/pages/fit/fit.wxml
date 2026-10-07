@@ -1,0 +1,65 @@
+<view class="page page--tabbed">
+  <view class="head">
+    <view class="grow">
+      <view class="head__title">FIT 解析</view>
+      <view class="head__sub">上传 .fit 文件解析汇总指标、15 类采样曲线与 GPS 轨迹</view>
+    </view>
+  </view>
+
+  <!-- 上传区 -->
+  <view class="upload" bindtap="chooseAndUpload">
+    <view class="upload__icon">↥</view>
+    <view class="upload__title">{{uploading ? '解析中…' : '选择 FIT 文件'}}</view>
+    <view class="upload__desc">从聊天记录中选择 .fit 文件</view>
+    <view class="upload__hint" catchtap="goGuide">不知道怎么导入？点这里看步骤</view>
+  </view>
+
+  <view class="alert alert--danger" wx:if="{{error}}">{{error}}</view>
+
+  <view class="card">
+    <view class="row-between">
+      <view class="card__title">导入历史</view>
+      <text class="t-xs t3">{{list.length}} 条</text>
+    </view>
+
+    <view class="loading" wx:if="{{loading}}"><view class="spinner"></view></view>
+    <view class="empty" wx:elif="{{list.length === 0}}">
+      <view class="empty__icon">📄</view>还没有导入过 FIT 文件
+    </view>
+
+    <view class="fititem" wx:for="{{list}}" wx:key="id">
+      <view class="fititem__main" bindtap="goDetail" data-id="{{item.activity_id}}">
+        <view class="fititem__top">
+          <view class="grow ellipsis bold t-md">{{item.activity_name}}</view>
+          <text class="chip chip--primary">{{item.activity_type}}</text>
+        </view>
+        <view class="fititem__file ellipsis">📄 {{item.file_name}} · {{item.file_size}}</view>
+        <view class="fititem__meta">
+          <text>{{item.start}}</text>
+          <text>· {{item.distance}}</text>
+          <text>· {{item.duration}}</text>
+        </view>
+        <view class="wrap" style="margin-top:12rpx">
+          <view class="chip">采样点 {{item.sample_count}}</view>
+          <view class="chip" wx:if="{{item.has_gps}}">轨迹点 {{item.track_point_count}}</view>
+          <view class="chip" wx:else>无 GPS</view>
+          <view class="chip">{{item.device_name}}</view>
+        </view>
+      </view>
+      <view class="fititem__actions">
+        <view class="btn btn--soft btn--sm" catchtap="goDetail" data-id="{{item.activity_id}}">查看</view>
+        <view
+          class="btn btn--danger-soft btn--sm"
+          catchtap="onDelete"
+          data-id="{{item.id}}"
+          data-name="{{item.activity_name}}"
+          data-activity-id="{{item.activity_id}}"
+        >
+          删除
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="safe-bottom"></view>
+</view>

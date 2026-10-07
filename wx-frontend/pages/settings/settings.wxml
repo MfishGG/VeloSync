@@ -1,0 +1,107 @@
+<view class="page">
+  <view class="head">
+    <view class="head__title">设置</view>
+    <view class="head__sub">接口地址 · 连通性 · 缓存 · 关于</view>
+  </view>
+
+  <!-- 后端地址 -->
+  <view class="card">
+    <view class="row-between">
+      <view class="card__title">后端接口地址</view>
+      <view class="t-xs t-primary" wx:if="{{!editing}}" bindtap="onEdit">修改</view>
+    </view>
+
+    <block wx:if="{{!editing}}">
+      <view class="urlbox" bindtap="onEdit">{{baseUrl}}</view>
+      <view class="t-xs t3" style="margin-top:12rpx">
+        本地联调请在开发者工具「详情 → 本地设置」勾选「不校验合法域名」；正式环境需 HTTPS 且在小程序后台登记 request 合法域名。
+      </view>
+      <view class="row-gap" style="margin-top:18rpx">
+        <view class="btn btn--soft btn--sm grow" bindtap="onTest">
+          {{testing ? '测试中…' : '测试连接'}}
+        </view>
+        <view class="btn btn--ghost btn--sm" bindtap="onResetUrl">恢复默认</view>
+      </view>
+    </block>
+
+    <block wx:else>
+      <input
+        class="input"
+        value="{{draftUrl}}"
+        bindinput="onUrlInput"
+        confirm-type="done"
+        bindconfirm="onUrlConfirm"
+        placeholder="http://127.0.0.1:8000/api"
+        placeholder-class="placeholder"
+        style="margin-top:16rpx"
+      />
+      <view class="t-xs t3" style="margin-top:10rpx">
+        真机调试可填电脑内网地址，例如 http://192.168.1.5:8000/api
+      </view>
+      <view class="row-gap" style="margin-top:18rpx">
+        <view class="btn btn--primary btn--sm grow" bindtap="onSaveUrl">保存</view>
+        <view class="btn btn--ghost btn--sm" bindtap="onCancelEdit">取消</view>
+      </view>
+    </block>
+
+    <view
+      class="alert {{testOk ? 'alert--info' : 'alert--warning'}}"
+      wx:if="{{testResult}}"
+      style="margin-top:18rpx"
+    >
+      {{testResult}}
+    </view>
+  </view>
+
+  <!-- 开发者资源 -->
+  <view class="card">
+    <view class="card__title">开发者资源</view>
+    <view class="card__hint">小程序内无法直接打开网页，点击可复制地址到浏览器访问</view>
+
+    <view class="linkrow" data-value="{{adminUrl}}" bindtap="onCopy">
+      <view class="grow">
+        <view class="t-md t1">Django Admin 后台</view>
+        <view class="t-xs t3 ellipsis">{{adminUrl}}</view>
+      </view>
+      <view class="linkrow__copy">复制</view>
+    </view>
+
+    <view class="linkrow" data-value="{{docsUrl}}" bindtap="onCopy">
+      <view class="grow">
+        <view class="t-md t1">OpenAPI 文档（Swagger）</view>
+        <view class="t-xs t3 ellipsis">{{docsUrl}}</view>
+      </view>
+      <view class="linkrow__copy">复制</view>
+    </view>
+  </view>
+
+  <!-- 账号 -->
+  <view class="card">
+    <view class="card__title">当前账号</view>
+    <view class="t-md t1" style="margin-top:14rpx">{{user.nickname || user.username || '-'}}</view>
+    <view class="t-xs t3" style="margin-top:6rpx">@{{user.username}} · ID {{user.id}}</view>
+  </view>
+
+  <!-- 其它 -->
+  <view class="card">
+    <view class="switch-row" bindtap="onClearCache">
+      <view class="switch-row__text">
+        <view class="t-md t1">清除本地缓存</view>
+        <view class="t-xs t3">清除登录态与接口地址设置</view>
+      </view>
+      <view class="menu__arrow">›</view>
+    </view>
+    <view class="divider"></view>
+    <view class="switch-row" bindtap="onAbout">
+      <view class="switch-row__text">
+        <view class="t-md t1">关于 VeloSync 速同</view>
+        <view class="t-xs t3">版本 v{{version}}</view>
+      </view>
+      <view class="menu__arrow">›</view>
+    </view>
+    <view class="divider"></view>
+    <view class="t-xs t3">运行环境：{{envInfo}}</view>
+  </view>
+
+  <view class="safe-bottom"></view>
+</view>

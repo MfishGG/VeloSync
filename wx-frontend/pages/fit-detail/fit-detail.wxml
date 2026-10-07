@@ -1,0 +1,159 @@
+<view class="page">
+  <view class="alert alert--danger" wx:if="{{error}}">{{error}}</view>
+  <view class="loading" wx:if="{{loading}}"><view class="spinner"></view></view>
+
+  <block wx:if="{{summary}}">
+    <!-- 概要 -->
+    <view class="card">
+      <view class="row-between">
+        <view class="grow">
+          <view class="t-lg bold t1 ellipsis">{{title}}</view>
+          <view class="t-xs t3" style="margin-top:6rpx">{{detail.file_name}} · {{fileSizeText}}</view>
+        </view>
+        <view class="chip chip--primary">{{summary.activity_type}}</view>
+      </view>
+      <view class="t-xs t3" style="margin-top:10rpx">
+        开始时间：{{summary.start_time || '未知'}} · 文件哈希 {{hashShort}}
+      </view>
+    </view>
+
+    <!-- 指标卡 -->
+    <view class="card">
+      <view class="card__title">汇总指标</view>
+      <view class="mgrid">
+        <view class="mgrid__item" wx:for="{{cards}}" wx:key="label">
+          <view class="mgrid__value">{{item.value}}<text class="mgrid__unit">{{item.sub}}</text></view>
+          <view class="mgrid__label">{{item.label}}</view>
+        </view>
+      </view>
+      <view class="divider"></view>
+      <view class="t-xs t3">
+        设备：{{device.manufacturer || '未知厂商'}} · {{device.product || '未知型号'}}
+      </view>
+    </view>
+
+    <!-- 图表 -->
+    <view class="card">
+      <view class="row-between">
+        <view class="card__title">数据曲线</view>
+        <text class="t-xs t3">{{mode === 'overlay' ? '叠加' : '每个指标独占一行'}}</text>
+      </view>
+
+      <!-- 维度 -->
+      <view class="segment" style="margin-top:16rpx">
+        <view
+          class="segment__item {{dim === 'time' ? 'segment__item--active' : ''}}"
+          data-dim="time"
+          bindtap="onDimChange"
+          >时间维度</view
+        >
+        <view
+          class="segment__item {{dim === 'distance' ? 'segment__item--active' : ''}}"
+          data-dim="distance"
+          bindtap="onDimChange"
+          >距离维度</view
+        >
+      </view>
+
+      <!-- 模式 -->
+      <view class="segment" style="margin-top:12rpx">
+        <view
+          class="segment__item {{mode === 'split' ? 'segment__item--active' : ''}}"
+          data-mode="split"
+          bindtap="onModeChange"
+          >分指标（15 行，无数据留空）</view
+        >
+        <view
+          class="segment__item {{mode === 'overlay' ? 'segment__item--active' : ''}}"
+          data-mode="overlay"
+          bindtap="onModeChange"
+          >叠加到一张图</view
+        >
+      </view>
+
+      <!-- 叠加模式下选择指标 -->
+      <view class="wrap" style="margin-top:16rpx" wx:if="{{mode === 'overlay'}}">
+        <view
+          class="mchip {{overlayKeys.indexOf(item.key) >= 0 ? 'mchip--on' : ''}}"
+          wx:for="{{metricDefs}}"
+          wx:key="key"
+          data-key="{{item.key}}"
+          bindtap="toggleOverlay"
+          style="{{overlayKeys.indexOf(item.key) >= 0 ? 'border-color:' + item.color + ';color:' + item.color : ''}}"
+        >
+          <view class="mchip__dot" style="background:{{item.color}}"></view>{{item.label}}
+        </view>
+      </view>
+
+      <canvas type="2d" id="fitChart" class="chart" style="height:{{chartHeight}}px"></canvas>
+
+      <view class="t-xs t3" style="margin-top:12rpx" wx:if="{{mode === 'overlay'}}">
+        叠加模式下每个指标按自身极值归一化到 0~100%，因此纵轴只表示相对变化；虚线为各自平均值。
+      </view>
+      <view class="t-xs t3" style="margin-top:12rpx" wx:else>
+        虚线为该指标的全程平均值；无数据的指标保留空白图位（预留）。
+      </view>
+    </view>
+
+    <!-- 轨迹 -->
+    <view class="card" wx:if="{{hasGps}}">
+      <view class="row-between">
+        <view class="card__title">GPS 轨迹回放</view>
+        <text class="t-xs t3">{{trackLabel}}</text>
+      </view>
+
+      <map
+        class="map"
+        latitude="{{mapCenter.latitude}}"
+        longitude="{{mapCenter.longitude}}"
+        scale="12"
+        polyline="{{polyline}}"
+        markers="{{markers}}"
+        include-points="{{includePoints}}"
+        show-location
+        enable-rotate="{{false}}"
+      ></map>
+
+      <view class="row-gap" style="margin-top:16rpx">
+        <view class="btn btn--ghost btn--sm" bindtap="gotoStart">⏮</view>
+        <view class="btn btn--primary btn--sm grow" bindtap="togglePlay">
+          {{playing ? '暂停' : '播放'}}
+        </view>
+        <view class="btn btn--ghost btn--sm" bindtap="gotoEnd">⏭</view>
+        <picker
+          mode="selector"
+          range="{{speeds}}"
+          value="{{speedIndex}}"
+          bindchange="onSpeedChange"
+        >
+          <view class="btn btn--soft btn--sm">{{speeds[speedIndex]}}×</view>
+        </picker>
+      </view>
+
+      <slider
+        min="0"
+        max="{{trackTotal - 1}}"
+        value="{{trackIndex}}"
+        block-size="16"
+        activeColor="#4f46e5"
+        bindchange="onSeek"
+        bindchanging="onSeek"
+        style="margin-top:10rpx"
+      />
+
+      <view class="t-xs t3">
+        轨迹已做 WGS-84 → GCJ-02 坐标纠偏；显示用 {{trackTotal}} 点（原始
+        {{summary.raw_track_count || trackTotal}} 点{{summary.downsampled ? '，已按上限抽稀' : ''}}）。
+      </view>
+    </view>
+
+    <view class="card" wx:else>
+      <view class="card__title">GPS 轨迹</view>
+      <view class="empty">
+        <view class="empty__icon">🛰</view>该 FIT 文件没有 GPS 轨迹数据
+      </view>
+    </view>
+  </block>
+
+  <view class="safe-bottom"></view>
+</view>

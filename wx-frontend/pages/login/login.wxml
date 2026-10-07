@@ -1,0 +1,184 @@
+<view class="login">
+  <view class="hero">
+    <image class="hero__logo" src="/assets/brand/logo-144.png" mode="aspectFit" />
+    <view class="hero__name">VeloSync</view>
+    <view class="hero__sub">速同 · 跨平台运动数据同步中枢</view>
+  </view>
+
+  <!-- 后端接口地址：真机预览时在登录前就能改，避免进不去设置页 -->
+  <view class="card stack" wx:if="{{editingBase}}">
+    <view class="card__title">后端接口地址</view>
+    <view class="field">
+      <input
+        class="input"
+        value="{{draftUrl}}"
+        bindinput="onBaseInput"
+        placeholder="http://192.168.1.5:8000/api"
+        placeholder-class="placeholder"
+      />
+    </view>
+    <view class="tip">
+      真机预览请填电脑的内网 IP（本机为 192.168.31.254），不要写 127.0.0.1 —— 在手机上它指向手机自己。
+    </view>
+    <view class="alert alert--info" wx:if="{{baseTestOk}}">
+      连接正常 · 登录模式：{{baseMode === 'oauth' ? '已配置 AppID' : '演示身份'}}
+    </view>
+    <view class="alert alert--danger" wx:if="{{baseTestErr}}">{{baseTestErr}}</view>
+    <view class="row row-gap">
+      <button class="btn btn--soft grow" bindtap="cancelBaseEdit">取消</button>
+      <button class="btn btn--soft grow" bindtap="testBaseUrl" disabled="{{baseTesting}}">
+        {{baseTesting ? '测试中…' : '测试连接'}}
+      </button>
+      <button class="btn btn--primary grow" bindtap="saveBaseUrl">保存</button>
+    </view>
+  </view>
+
+  <view class="card stack">
+    <view class="segment">
+      <view
+        class="segment__item {{tab === 'login' ? 'segment__item--active' : ''}}"
+        data-tab="login"
+        bindtap="switchTab"
+        >登录</view
+      >
+      <view
+        class="segment__item {{tab === 'register' ? 'segment__item--active' : ''}}"
+        data-tab="register"
+        bindtap="switchTab"
+        >注册</view
+      >
+    </view>
+
+    <view class="alert alert--danger" wx:if="{{error}}">{{error}}</view>
+
+    <!-- ---------- 登录 ---------- -->
+    <block wx:if="{{tab === 'login'}}">
+      <view class="field">
+        <view class="field__label">用户名</view>
+        <input
+          class="input"
+          value="{{username}}"
+          data-field="username"
+          bindinput="onInput"
+          placeholder="请输入用户名"
+          placeholder-class="placeholder"
+        />
+      </view>
+      <view class="field">
+        <view class="field__label">密码</view>
+        <input
+          class="input"
+          password
+          value="{{password}}"
+          data-field="password"
+          bindinput="onInput"
+          placeholder="请输入密码"
+          placeholder-class="placeholder"
+        />
+      </view>
+      <button class="btn btn--primary btn--block" bindtap="submitLogin" disabled="{{loading}}">
+        {{loading ? '登录中…' : '登录'}}
+      </button>
+      <view class="tip">演示账号：demo / demo123456</view>
+    </block>
+
+    <!-- ---------- 注册 ---------- -->
+    <block wx:else>
+      <view class="field">
+        <view class="field__label">用户名<text class="field__req">*</text></view>
+        <input
+          class="input"
+          value="{{rUsername}}"
+          data-field="rUsername"
+          bindinput="onInput"
+          placeholder="3 个字符以上，用于登录"
+          placeholder-class="placeholder"
+        />
+      </view>
+      <view class="field">
+        <view class="field__label">昵称</view>
+        <input
+          class="input"
+          value="{{rNickname}}"
+          data-field="rNickname"
+          bindinput="onInput"
+          placeholder="工作台展示用，可留空"
+          placeholder-class="placeholder"
+        />
+      </view>
+      <view class="field">
+        <view class="field__label">邮箱</view>
+        <input
+          class="input"
+          value="{{rEmail}}"
+          data-field="rEmail"
+          bindinput="onInput"
+          placeholder="选填"
+          placeholder-class="placeholder"
+        />
+      </view>
+      <view class="field">
+        <view class="field__label">密码<text class="field__req">*</text></view>
+        <input
+          class="input"
+          password
+          value="{{rPassword}}"
+          data-field="rPassword"
+          bindinput="onInput"
+          placeholder="至少 6 位"
+          placeholder-class="placeholder"
+        />
+      </view>
+      <view class="field">
+        <view class="field__label">确认密码<text class="field__req">*</text></view>
+        <input
+          class="input"
+          password
+          value="{{rConfirm}}"
+          data-field="rConfirm"
+          bindinput="onInput"
+          placeholder="再输入一次"
+          placeholder-class="placeholder"
+        />
+      </view>
+      <button class="btn btn--primary btn--block" bindtap="submitRegister" disabled="{{loading}}">
+        {{loading ? '注册中…' : '注册并登录'}}
+      </button>
+    </block>
+  </view>
+
+  <!-- ---------- 快捷登录 ---------- -->
+  <view class="card stack">
+    <view class="divider-row">
+      <view class="divider-row__line"></view>
+      <text class="divider-row__text">快捷登录</text>
+      <view class="divider-row__line"></view>
+    </view>
+
+    <button class="btn btn--wx btn--block" bindtap="wxLogin" disabled="{{loading}}">
+      <text class="wx-dot"></text>{{loading ? '登录中…' : '微信一键登录'}}
+    </button>
+
+    <view class="wx-note">
+      仅支持微信登录：VeloSync 需要你的微信身份来建立账号，昵称与头像直接来自微信授权。
+    </view>
+
+    <view class="alert alert--warning" wx:if="{{providersFailed}}">
+      未连接到后端（{{baseUrlHost}}）。
+      <text class="t-primary" bindtap="editBase">修改接口地址</text>
+    </view>
+    <view class="alert alert--success" wx:elif="{{wxMode === 'oauth'}}">
+      已接入微信真实登录：点击上方按钮将唤起微信授权，昵称与头像来自你的微信账号。
+    </view>
+    <view class="alert alert--info" wx:else>
+      当前为演示模式（后端未配置小程序 AppID）：微信一键登录会用本机稳定的演示身份建号，
+      配置 <text class="mono">WECHAT_MP_APP_ID / WECHAT_MP_APP_SECRET</text> 后自动切换为真实登录。
+    </view>
+  </view>
+
+  <view class="login__base" bindtap="editBase">
+    接口地址：{{baseUrlHost}} · <text class="t-primary">修改</text>
+  </view>
+
+  <view class="safe-bottom"></view>
+</view>

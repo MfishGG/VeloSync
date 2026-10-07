@@ -1,0 +1,76 @@
+<view class="page page--tabbed">
+  <view class="head">
+    <view class="grow">
+      <view class="head__title">同步任务</view>
+      <view class="head__sub">数据来源 → 同步内容 → 目标账号 → 时间与选项</view>
+    </view>
+    <view class="btn btn--primary btn--sm" bindtap="goNew">+ 新建</view>
+  </view>
+
+  <view class="alert alert--danger" wx:if="{{error}}">{{error}}</view>
+  <view class="loading" wx:if="{{loading}}"><view class="spinner"></view></view>
+
+  <view class="empty" wx:if="{{!loading && list.length === 0}}">
+    <view class="empty__icon">⇄</view>
+    <view>还没有同步任务</view>
+    <view class="t-xs t3" style="margin-top:8rpx">点右上角「新建」创建第一条</view>
+  </view>
+
+  <view class="stack">
+    <view class="card task" wx:for="{{list}}" wx:key="id">
+      <view class="row-between" bindtap="goDetail" data-id="{{item.id}}">
+        <view class="grow">
+          <view class="task__name ellipsis">{{item.name}}</view>
+          <view class="task__desc ellipsis" wx:if="{{item.description}}">{{item.description}}</view>
+        </view>
+        <view class="status" style="color:{{item.runColor}}">
+          <view class="status__dot" style="background:{{item.runColor}}"></view>
+          {{item.runLabel}}
+        </view>
+      </view>
+
+      <!-- 流转路径 -->
+      <view class="flow" bindtap="goDetail" data-id="{{item.id}}">
+        <view class="flow__node">{{item.source_label}}</view>
+        <view class="flow__arrow">→</view>
+        <view class="flow__node flow__node--target ellipsis">
+          {{item.target_summary || '未选目标'}}
+        </view>
+      </view>
+
+      <!-- 同步内容 chips -->
+      <view class="wrap" style="margin-top:16rpx" wx:if="{{item.contentChips.length}}">
+        <view class="chip chip--primary" wx:for="{{item.contentChips}}" wx:for-item="c" wx:key="*this">{{c}}</view>
+        <view class="chip" wx:if="{{item.moreContents}}">+{{item.moreContents}}</view>
+      </view>
+
+      <view class="task__meta">
+        <text>⏱ {{item.time_summary}}</text>
+        <text wx:if="{{!item.is_active}}" class="t-warning">· 已停用</text>
+        <text wx:else>· 上次 {{item.lastRunText}}</text>
+      </view>
+
+      <view class="task__actions">
+        <view
+          class="btn btn--soft btn--sm"
+          catchtap="runTask"
+          data-id="{{item.id}}"
+          data-name="{{item.name}}"
+        >
+          {{runningId === item.id ? '运行中…' : '立即运行'}}
+        </view>
+        <view class="btn btn--ghost btn--sm" catchtap="goDetail" data-id="{{item.id}}">配置</view>
+        <view
+          class="btn btn--danger-soft btn--sm"
+          catchtap="deleteTask"
+          data-id="{{item.id}}"
+          data-name="{{item.name}}"
+        >
+          删除
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="safe-bottom"></view>
+</view>

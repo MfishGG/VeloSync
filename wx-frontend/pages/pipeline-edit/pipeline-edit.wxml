@@ -1,0 +1,142 @@
+<view class="page page--edit">
+  <view class="alert alert--danger" wx:if="{{error}}">{{error}}</view>
+  <view class="loading" wx:if="{{loading}}"><view class="spinner"></view></view>
+
+  <block wx:if="{{config}}">
+    <!-- 头部：状态 + 上次运行 -->
+    <view class="card">
+      <view class="row-between">
+        <view class="grow">
+          <view class="t-lg bold t1 ellipsis">{{config.name || '未命名任务'}}</view>
+          <view class="t-xs t3" style="margin-top:6rpx">上次运行：{{lastRunText}}</view>
+        </view>
+        <view class="chip {{runStatus.key === 'success' ? 'chip--success' : runStatus.key === 'partial' ? 'chip--warning' : runStatus.key === 'error' ? 'chip--danger' : 'chip--primary'}}">
+          {{runStatus.label || '未运行'}}
+        </view>
+      </view>
+    </view>
+
+    <!-- ============ 执行图 ============ -->
+    <view class="card">
+      <view class="card__title">执行图</view>
+      <view class="card__hint">配置变更后由后端自动重建：源 → 时间范围 → 各目标账号</view>
+
+      <view class="flow">
+        <view
+          class="node node--source {{running ? 'node--running' : ''}}"
+          wx:for="{{flow.sources}}"
+          wx:key="id"
+        >
+          <view class="node__tag node__tag--source">源</view>
+          <view class="grow">
+            <view class="node__primary">{{item.primary}}</view>
+            <view class="node__secondary ellipsis">{{item.secondary}}</view>
+          </view>
+        </view>
+
+        <view class="flow__arrow" wx:if="{{flow.filters.length}}">↓</view>
+        <view
+          class="node node--filter {{running ? 'node--running' : ''}}"
+          wx:for="{{flow.filters}}"
+          wx:key="id"
+        >
+          <view class="node__tag node__tag--filter">滤</view>
+          <view class="grow">
+            <view class="node__primary">{{item.primary}}</view>
+            <view class="node__secondary ellipsis">{{item.secondary}}</view>
+          </view>
+        </view>
+
+        <view class="flow__arrow" wx:if="{{flow.targets.length}}">↓</view>
+        <view class="targets">
+          <view
+            class="node node--target {{running ? 'node--running' : ''}}"
+            wx:for="{{flow.targets}}"
+            wx:key="id"
+          >
+            <view class="node__tag node__tag--target">标</view>
+            <view class="grow">
+              <view class="node__primary ellipsis">{{item.primary}}</view>
+              <view class="node__secondary ellipsis">{{item.secondary}}</view>
+            </view>
+          </view>
+        </view>
+
+        <view class="empty" wx:if="{{!flow.targets.length}}" style="padding:30rpx 0">
+          还没有目标账号
+        </view>
+      </view>
+    </view>
+
+    <!-- ============ 运行结果 ============ -->
+    <view class="card" wx:if="{{statsRows.length}}">
+      <view class="card__title">最近一次运行</view>
+      <view class="stats-grid">
+        <view class="stats-grid__item" wx:for="{{statsRows}}" wx:key="label">
+          <view class="stats-grid__value {{item.tint === 'success' ? 't-success' : item.tint === 'danger' ? 't-danger' : 't1'}}">
+            {{item.value}}
+          </view>
+          <view class="stats-grid__label">{{item.label}}</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- ============ 基本信息 ============ -->
+    <view class="card stack">
+      <view class="field">
+        <view class="field__label">任务名称<text class="field__req">*</text></view>
+        <input
+          class="input"
+          value="{{config.name}}"
+          data-field="name"
+          bindinput="onInput"
+          placeholder="任务名称"
+          placeholder-class="placeholder"
+        />
+      </view>
+      <view class="field">
+        <view class="field__label">描述</view>
+        <input
+          class="input"
+          value="{{config.description}}"
+          data-field="description"
+          bindinput="onInput"
+          placeholder="选填"
+          placeholder-class="placeholder"
+        />
+      </view>
+      <view class="switch-row">
+        <view class="switch-row__text">
+          <view class="t-md t1">启用任务</view>
+          <view class="t-xs t3">停用后不会被执行</view>
+        </view>
+        <switch checked="{{config.is_active}}" color="#4f46e5" data-field="is_active" bindchange="onSwitch" />
+      </view>
+      <view class="switch-row">
+        <view class="switch-row__text">
+          <view class="t-md t1">定时自动运行</view>
+          <view class="t-xs t3">由后端 Celery Beat 每 5 分钟轮询</view>
+        </view>
+        <switch checked="{{config.auto_run}}" color="#4f46e5" data-field="auto_run" bindchange="onSwitch" />
+      </view>
+    </view>
+
+    <!-- ============ 结构化配置 ============ -->
+    <sync-form spec="{{spec}}" value="{{config}}" step="" bindchange="onFormChange" />
+
+    <view class="danger-zone">
+      <view class="btn btn--danger-soft btn--block" bindtap="onDelete">删除该同步任务</view>
+    </view>
+
+    <view class="safe-bottom" style="height:180rpx"></view>
+  </block>
+
+  <!-- 底部操作条 -->
+  <view class="actionbar" wx:if="{{config}}">
+    <view class="actionbar__inner">
+      <view class="btn btn--ghost btn--sm" bindtap="onSave">{{saving ? '保存中…' : (dirty ? '保存*' : '保存')}}</view>
+      <view class="btn btn--soft btn--sm" bindtap="onPreview">{{previewing ? '预览中…' : '试运行'}}</view>
+      <view class="btn btn--primary grow" bindtap="onRun">{{running ? '运行中…' : '运行任务'}}</view>
+    </view>
+  </view>
+</view>

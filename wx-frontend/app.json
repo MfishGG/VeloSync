@@ -1,0 +1,72 @@
+{
+  "pages": [
+    "pages/dashboard/dashboard",
+    "pages/login/login",
+    "pages/pipelines/pipelines",
+    "pages/pipeline-new/pipeline-new",
+    "pages/pipeline-edit/pipeline-edit",
+    "pages/matrix/matrix",
+    "pages/fit/fit",
+    "pages/fit-detail/fit-detail",
+    "pages/mine/mine",
+    "pages/accounts/accounts",
+    "pages/logs/logs",
+    "pages/settings/settings"
+  ],
+  "window": {
+    "backgroundTextStyle": "light",
+    "navigationBarBackgroundColor": "#4f46e5",
+    "navigationBarTitleText": "VeloSync 速同",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f1f5f9",
+    "backgroundColorTop": "#4f46e5",
+    "backgroundColorBottom": "#f1f5f9"
+  },
+  "tabBar": {
+    "color": "#94a3b8",
+    "selectedColor": "#4f46e5",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/dashboard/dashboard",
+        "text": "仪表盘",
+        "iconPath": "assets/tabbar/dashboard.png",
+        "selectedIconPath": "assets/tabbar/dashboard-on.png"
+      },
+      {
+        "pagePath": "pages/pipelines/pipelines",
+        "text": "同步任务",
+        "iconPath": "assets/tabbar/sync.png",
+        "selectedIconPath": "assets/tabbar/sync-on.png"
+      },
+      {
+        "pagePath": "pages/matrix/matrix",
+        "text": "矩阵",
+        "iconPath": "assets/tabbar/matrix.png",
+        "selectedIconPath": "assets/tabbar/matrix-on.png"
+      },
+      {
+        "pagePath": "pages/fit/fit",
+        "text": "FIT",
+        "iconPath": "assets/tabbar/fit.png",
+        "selectedIconPath": "assets/tabbar/fit-on.png"
+      },
+      {
+        "pagePath": "pages/mine/mine",
+        "text": "我的",
+        "iconPath": "assets/tabbar/mine.png",
+        "selectedIconPath": "assets/tabbar/mine-on.png"
+      }
+    ]
+  },
+  "permission": {
+    "scope.userLocation": {
+      "desc": "用于在轨迹回放时展示您的当前位置"
+    }
+  },
+  "requiredPrivateInfos": ["getLocation"],
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents"
+}

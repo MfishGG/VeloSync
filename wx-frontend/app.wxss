@@ -1,0 +1,6 @@
+/**
+ * VeloSync 小程序全局入口样式
+ * 公共设计系统放在 styles/common.wxss，这里只做引入，
+ * 以便自定义组件也能通过 @import 复用同一套 class。
+ */
+@import "styles/common.wxss";

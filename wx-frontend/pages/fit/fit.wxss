@@ -1,0 +1,83 @@
+.head {
+  padding: 8rpx 8rpx 24rpx;
+}
+.head__title {
+  font-size: 38rpx;
+  font-weight: 700;
+}
+.head__sub {
+  font-size: 22rpx;
+  color: var(--t3);
+  margin-top: 6rpx;
+  line-height: 1.5;
+}
+
+/* 上传区 */
+.upload {
+  background: linear-gradient(135deg, #eef2ff 0%, #f5f7ff 100%);
+  border: 3rpx dashed #c7d2fe;
+  border-radius: 24rpx;
+  padding: 44rpx 24rpx;
+  text-align: center;
+  margin-bottom: 24rpx;
+}
+.upload:active {
+  background: #e8ecff;
+}
+.upload__icon {
+  font-size: 60rpx;
+  color: var(--primary);
+  line-height: 1;
+}
+.upload__title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--primary-deep);
+  margin-top: 14rpx;
+}
+.upload__desc {
+  font-size: 22rpx;
+  color: var(--t3);
+  margin-top: 6rpx;
+}
+.upload__hint {
+  font-size: 21rpx;
+  color: var(--primary);
+  margin-top: 14rpx;
+  text-decoration: underline;
+}
+
+/* 历史项 */
+.fititem {
+  padding: 22rpx 0;
+  border-bottom: 2rpx solid var(--line-soft);
+}
+.fititem:last-child {
+  border-bottom: none;
+}
+.fititem__top {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+.fititem__file {
+  font-size: 21rpx;
+  color: var(--t3);
+  margin-top: 8rpx;
+}
+.fititem__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  font-size: 22rpx;
+  color: var(--t2);
+  margin-top: 8rpx;
+}
+.fititem__actions {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 18rpx;
+}
+.fititem__actions .btn {
+  flex: 1;
+}

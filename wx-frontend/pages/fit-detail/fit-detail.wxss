@@ -1,0 +1,77 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+}
+
+/* 指标卡网格 */
+.mgrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14rpx;
+  margin-top: 18rpx;
+}
+.mgrid__item {
+  flex: 1 1 calc(33.33% - 14rpx);
+  box-sizing: border-box;
+  background: #f8fafc;
+  border-radius: 16rpx;
+  padding: 16rpx 14rpx;
+  min-width: 0;
+}
+.mgrid__value {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: var(--t1);
+  line-height: 1.15;
+  word-break: break-all;
+}
+.mgrid__unit {
+  font-size: 19rpx;
+  font-weight: 400;
+  color: var(--t3);
+  margin-left: 4rpx;
+}
+.mgrid__label {
+  font-size: 20rpx;
+  color: var(--t3);
+  margin-top: 6rpx;
+}
+
+/* 图表 */
+.chart {
+  width: 100%;
+  display: block;
+  margin-top: 18rpx;
+}
+
+/* 叠加模式指标选择 */
+.mchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 8rpx 16rpx;
+  border-radius: 999rpx;
+  font-size: 22rpx;
+  color: var(--t2);
+  background: #f1f5f9;
+  border: 2rpx solid #f1f5f9;
+}
+.mchip--on {
+  background: #fff;
+  font-weight: 500;
+}
+.mchip__dot {
+  width: 14rpx;
+  height: 14rpx;
+  border-radius: 50%;
+}
+
+/* 地图 */
+.map {
+  width: 100%;
+  height: 520rpx;
+  border-radius: 18rpx;
+  margin-top: 16rpx;
+  overflow: hidden;
+}

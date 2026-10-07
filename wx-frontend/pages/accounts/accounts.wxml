@@ -1,0 +1,94 @@
+<view class="page">
+  <view class="head">
+    <view class="head__title">账号管理</view>
+    <view class="head__sub">绑定平台账号 · Token 加密存储 · 支持同平台多账号</view>
+  </view>
+
+  <view class="alert alert--danger" wx:if="{{error}}">{{error}}</view>
+  <view class="loading" wx:if="{{loading}}"><view class="spinner"></view></view>
+
+  <block wx:if="{{!loading}}">
+    <!-- 可绑定平台 -->
+    <view class="card">
+      <view class="card__title">可绑定的平台</view>
+      <view class="card__hint">
+        微信不允许小程序直接唤起第三方 App，绑定按「官方小程序 → 官方 App → 演示身份」三级兜底
+      </view>
+
+      <view class="pcard" wx:for="{{platforms}}" wx:key="id">
+        <view class="row-between">
+          <view class="row-gap grow">
+            <view class="pcard__logo">{{item.name[0]}}</view>
+            <view class="grow">
+              <view class="t-md bold t1 ellipsis">{{item.name}}</view>
+              <view class="t-xs t3">
+                {{item.auth_type}} · {{item.upload ? '可上传' : '仅拉取'}}
+              </view>
+            </view>
+          </view>
+          <view class="chip {{item.boundCount ? 'chip--success' : ''}}">
+            {{item.boundCount ? '已绑定 ' + item.boundCount : '未绑定'}}
+          </view>
+        </view>
+
+        <view class="wrap" style="margin-top:14rpx">
+          <view class="chip {{item.channelTint}}">{{item.channelLabel}}</view>
+          <view class="chip {{item.oauth_ready ? 'chip--success' : 'chip--warning'}}">
+            {{item.oauth_ready ? '凭证已配置' : '凭证未配置'}}
+          </view>
+          <view class="chip" wx:if="{{item.miniprogram_appid}}">官方小程序</view>
+        </view>
+
+        <view class="pcard__hint" wx:if="{{!item.oauth_ready && item.oauth_missing.length}}">
+          尚缺：{{item.oauth_missing}}
+        </view>
+
+        <view
+          class="btn btn--soft btn--block"
+          style="margin-top:16rpx"
+          data-code="{{item.code}}"
+          bindtap="onBind"
+        >
+          {{item.boundCount ? '再绑一个 / 重新授权' : '绑定账号'}}
+        </view>
+      </view>
+    </view>
+
+    <!-- 已绑定 -->
+    <view class="card">
+      <view class="row-between">
+        <view class="card__title">已绑定账号</view>
+        <text class="t-xs t3">{{accounts.length}} 个</text>
+      </view>
+
+      <view class="empty" wx:if="{{accounts.length === 0}}">
+        <view class="empty__icon">🔗</view>还没有绑定任何账号
+      </view>
+
+      <view class="acc" wx:for="{{accounts}}" wx:key="id">
+        <view class="grow">
+          <view class="row-gap">
+            <view class="t-md bold t1 ellipsis">{{item.displayName}}</view>
+            <view class="badge" wx:if="{{item.isDemo}}" style="background:#f5f3ff;color:#7c3aed">
+              演示身份
+            </view>
+          </view>
+          <view class="t-xs t3" style="margin-top:6rpx">
+            {{item.platformName}} · {{item.platformUserId}}
+          </view>
+          <view class="t-xs t3">绑定于 {{item.created}} · 状态 {{item.status}}</view>
+        </view>
+        <view
+          class="btn btn--danger-soft btn--sm"
+          data-id="{{item.id}}"
+          data-name="{{item.displayName}}"
+          bindtap="onUnbind"
+        >
+          解绑
+        </view>
+      </view>
+    </view>
+  </block>
+
+  <view class="safe-bottom"></view>
+</view>

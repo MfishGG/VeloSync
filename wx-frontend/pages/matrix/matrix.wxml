@@ -1,0 +1,68 @@
+<view class="page page--tabbed">
+  <view class="head">
+    <view class="grow">
+      <view class="head__title">活动矩阵</view>
+      <view class="head__sub">
+        已同步 {{syncedCount}} / 可同步 {{totalCells}} 个单元格 · 点击单元格查看详情或手动同步
+      </view>
+    </view>
+  </view>
+
+  <view class="alert alert--danger" wx:if="{{error}}">{{error}}</view>
+  <view class="loading" wx:if="{{loading}}"><view class="spinner"></view></view>
+
+  <block wx:if="{{!loading}}">
+    <!-- 图例 -->
+    <view class="legend-bar">
+      <view class="legend-bar__item" wx:for="{{legend}}" wx:key="key">
+        <view class="cell cell--mini" style="color:{{item.color}};background:{{item.bg}}">
+          {{item.symbol}}
+        </view>
+        <text class="t-xs t3">{{item.label}}</text>
+      </view>
+    </view>
+
+    <view class="empty" wx:if="{{rows.length === 0}}">
+      <view class="empty__icon">▦</view>还没有活动数据
+    </view>
+
+    <!-- 矩阵（横向滚动） -->
+    <scroll-view wx:else class="matrix-scroll" scroll-x enhanced show-scrollbar>
+      <view class="matrix">
+        <!-- 表头 -->
+        <view class="mrow mrow--head">
+          <view class="mcell mcell--name">活动 ＼ 平台</view>
+          <view class="mcell mcell--plat" wx:for="{{platforms}}" wx:key="id">
+            <view class="plat-name ellipsis">{{item.name}}</view>
+          </view>
+        </view>
+
+        <!-- 数据行 -->
+        <view class="mrow" wx:for="{{rows}}" wx:key="id" wx:for-index="ri">
+          <view class="mcell mcell--name">
+            <view class="ellipsis bold t-md">{{item.name}}</view>
+            <view class="t-xs t3 ellipsis">{{item.time}} · {{item.type}} · {{item.distance}}</view>
+          </view>
+          <view
+            class="mcell mcell--plat"
+            wx:for="{{item.cells}}"
+            wx:for-item="c"
+            wx:for-index="ci"
+            wx:key="code"
+            data-row="{{ri}}"
+            data-col="{{ci}}"
+            bindtap="onCell"
+          >
+            <view class="cell" style="color:{{c.color}};background:{{c.bg}}">{{c.symbol}}</view>
+          </view>
+        </view>
+      </view>
+    </scroll-view>
+
+    <view class="t-xs t3" style="text-align:center;padding:16rpx 0">
+      ← 左右滑动查看更多平台 →
+    </view>
+  </block>
+
+  <view class="safe-bottom"></view>
+</view>

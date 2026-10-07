@@ -1,0 +1,270 @@
+<view class="form" wx:if="{{ready}}">
+  <!-- ================= 数据来源 ================= -->
+  <view class="section" wx:if="{{showSource}}">
+    <view class="section__head">
+      <view class="section__bar"></view>
+      <view class="grow">
+        <view class="section__title">数据来源</view>
+        <view class="section__hint">选择要同步出去的数据来自哪里</view>
+      </view>
+    </view>
+
+    <view class="field">
+      <view class="field__label">来源类型</view>
+      <picker
+        mode="selector"
+        range="{{sourceLabels}}"
+        value="{{sourceIndex}}"
+        bindchange="onSourceChange"
+      >
+        <view class="picker-box">
+          <text class="t1">{{sourceLabels[sourceIndex]}}</text>
+          <text class="t3">▾</text>
+        </view>
+      </picker>
+      <view class="field__desc" wx:if="{{sourceSpec.desc}}">{{sourceSpec.desc}}</view>
+    </view>
+
+    <!-- 平台来源：需绑定账号 -->
+    <view class="field" wx:if="{{needAccount}}">
+      <view class="field__label">来源账号</view>
+      <picker
+        wx:if="{{accountOptions.length}}"
+        mode="selector"
+        range="{{accountOptions}}"
+        range-key="label"
+        bindchange="onSourceAccount"
+      >
+        <view class="picker-box">
+          <text class="{{sourceAccountLabel ? 't1' : 'placeholder'}}">
+            {{sourceAccountLabel || '请选择已绑定的账号'}}
+          </text>
+          <text class="t3">▾</text>
+        </view>
+      </picker>
+      <view class="field__desc" wx:else>还没有绑定平台账号，请先到「我的 → 账号管理」绑定</view>
+    </view>
+
+    <!-- FIT 来源：选择具体记录 -->
+    <block wx:if="{{isFit}}">
+      <view class="field">
+        <view class="field__label">FIT 记录</view>
+        <picker
+          wx:if="{{fitOptions.length}}"
+          mode="selector"
+          range="{{fitOptions}}"
+          range-key="label"
+          bindchange="onFitChange"
+        >
+          <view class="picker-box">
+            <text class="{{fitIndex >= 0 ? 't1' : 'placeholder'}}">
+              {{fitIndex >= 0 ? fitLabel : '全部本地 FIT 记录'}}
+            </text>
+            <text class="t3">▾</text>
+          </view>
+        </picker>
+        <view class="field__desc" wx:else>
+          还没有导入 FIT 文件，请先到「FIT」页上传
+        </view>
+      </view>
+
+      <view class="alert alert--info" wx:if="{{fitBounds}}">
+        <view class="t-xs bold">该 FIT 记录自身范围</view>
+        <view class="t-xs" style="margin-top:6rpx">{{fitBounds.text}}</view>
+        <view class="t-xs t3" style="margin-top:6rpx">
+          时间范围受文件内记录限制：自定义区间超出部分会自动夹紧。
+        </view>
+      </view>
+    </block>
+  </view>
+
+  <!-- ================= 同步内容 ================= -->
+  <view class="section" wx:if="{{showContent}}">
+    <view class="section__head">
+      <view class="section__bar"></view>
+      <view class="grow">
+        <view class="section__title">同步内容</view>
+        <view class="section__hint">{{sourceLabels[sourceIndex]}} 支持同步的数据项，可多选</view>
+      </view>
+    </view>
+
+    <checkbox-group bindchange="onContentChange">
+      <label class="opt" wx:for="{{currentContents}}" wx:key="key">
+        <checkbox value="{{item.key}}" checked="{{item.checked}}" color="#4f46e5" />
+        <view class="opt__body">
+          <view class="opt__title">
+            {{item.label}}
+            <text class="badge badge--reserved" wx:if="{{!item.implemented}}">预留</text>
+          </view>
+          <view class="opt__desc">{{item.desc}}</view>
+        </view>
+      </label>
+    </checkbox-group>
+    <view class="t-xs t-danger" wx:if="{{currentContents.length === 0}}">该来源暂无可同步内容</view>
+  </view>
+
+  <!-- ================= 目标账号 ================= -->
+  <view class="section" wx:if="{{showTarget}}">
+    <view class="section__head">
+      <view class="section__bar"></view>
+      <view class="grow">
+        <view class="section__title">目标账号</view>
+        <view class="section__hint">可同时同步到多个已绑定的平台账号</view>
+      </view>
+    </view>
+
+    <checkbox-group bindchange="onTargetChange">
+      <label class="opt" wx:for="{{targetOptions}}" wx:key="id">
+        <checkbox
+          value="{{item.id}}"
+          checked="{{item.checked}}"
+          disabled="{{item.status !== 'active'}}"
+          color="#4f46e5"
+        />
+        <view class="opt__body">
+          <view class="opt__title">
+            {{item.label}}
+            <text class="badge" wx:if="{{!item.upload}}" style="background:#f1f5f9;color:#94a3b8">仅拉取</text>
+            <text class="badge" wx:if="{{item.status !== 'active'}}" style="background:#fef2f2;color:#b91c1c">已失效</text>
+          </view>
+        </view>
+      </label>
+    </checkbox-group>
+
+    <view class="t-xs t-danger" wx:if="{{targetOptions.length === 0}}">
+      还没有绑定任何平台账号，请先到「我的 → 账号管理」绑定
+    </view>
+  </view>
+
+  <!-- ================= 时间范围与选项 ================= -->
+  <block wx:if="{{showTime}}">
+    <view class="section">
+      <view class="section__head">
+        <view class="section__bar"></view>
+        <view class="grow">
+          <view class="section__title">时间范围</view>
+          <view class="section__hint">{{sourceSpec.time_note || '限定参与同步的活动时间'}}</view>
+        </view>
+      </view>
+
+      <view class="field">
+        <view class="field__label">范围模式</view>
+        <picker
+          mode="selector"
+          range="{{timeModeLabels}}"
+          value="{{timeModeIndex}}"
+          bindchange="onTimeModeChange"
+        >
+          <view class="picker-box">
+            <text class="t1">{{timeModeLabels[timeModeIndex]}}</text>
+            <text class="t3">▾</text>
+          </view>
+        </picker>
+      </view>
+
+      <!-- 最近 N 天 -->
+      <view class="field" wx:if="{{timeRange.mode === 'recent'}}">
+        <view class="field__label">最近</view>
+        <picker mode="selector" range="{{dayOptions}}" value="{{dayIndex}}" bindchange="onDaysChange">
+          <view class="picker-box">
+            <text class="t1">最近 {{dayOptions[dayIndex]}} 天</text>
+            <text class="t3">▾</text>
+          </view>
+        </picker>
+      </view>
+
+      <!-- 自定义区间 -->
+      <block wx:if="{{timeRange.mode === 'custom'}}">
+        <view class="field">
+          <view class="field__label">开始时间</view>
+          <view class="row-gap">
+            <picker mode="date" value="{{startDate}}" bindchange="onStartDate" class="grow">
+              <view class="picker-box">{{startDate || '选择日期'}}</view>
+            </picker>
+            <picker mode="time" value="{{startTime}}" bindchange="onStartTime">
+              <view class="picker-box">{{startTime}}</view>
+            </picker>
+          </view>
+        </view>
+        <view class="field">
+          <view class="field__label">结束时间</view>
+          <view class="row-gap">
+            <picker mode="date" value="{{endDate}}" bindchange="onEndDate" class="grow">
+              <view class="picker-box">{{endDate || '选择日期'}}</view>
+            </picker>
+            <picker mode="time" value="{{endTime}}" bindchange="onEndTime">
+              <view class="picker-box">{{endTime}}</view>
+            </picker>
+          </view>
+        </view>
+        <view class="row-gap" style="margin-top:8rpx">
+          <view class="btn btn--ghost btn--sm" wx:if="{{fitBounds}}" bindtap="fillFitRange">
+            填入 FIT 记录范围
+          </view>
+          <view class="btn btn--ghost btn--sm" bindtap="clearCustom">清空</view>
+        </view>
+      </block>
+
+      <view class="alert alert--info" wx:if="{{timeRange.mode === 'file'}}">
+        使用 FIT 文件自身记录的时间范围，不额外过滤。
+      </view>
+    </view>
+
+    <view class="section">
+      <view class="section__head">
+        <view class="section__bar"></view>
+        <view class="grow">
+          <view class="section__title">同步选项</view>
+          <view class="section__hint">已按最佳实践预置默认值，可按需调整</view>
+        </view>
+      </view>
+
+      <block wx:for="{{optionRows}}" wx:key="key">
+        <!-- 开关 -->
+        <view class="switch-row" wx:if="{{item.type === 'bool'}}">
+          <view class="switch-row__text">
+            <view class="opt__title">{{item.label}}</view>
+            <view class="opt__desc">{{item.desc}}</view>
+          </view>
+          <switch
+            checked="{{item.value}}"
+            color="#4f46e5"
+            data-key="{{item.key}}"
+            bindchange="onOptionSwitch"
+          />
+        </view>
+
+        <!-- 单选 -->
+        <view class="field" wx:elif="{{item.type === 'choice'}}" style="margin-bottom:16rpx">
+          <view class="field__label">{{item.label}}</view>
+          <picker
+            mode="selector"
+            range="{{item.choiceLabels}}"
+            value="{{item.choiceIndex}}"
+            data-key="{{item.key}}"
+            bindchange="onOptionChoice"
+          >
+            <view class="picker-box">
+              <text class="t1">{{item.choiceLabel}}</text>
+              <text class="t3">▾</text>
+            </view>
+          </picker>
+          <view class="field__desc">{{item.desc}}</view>
+        </view>
+
+        <!-- 数值 -->
+        <view class="field" wx:else style="margin-bottom:16rpx">
+          <view class="field__label">{{item.label}}</view>
+          <input
+            class="input"
+            type="number"
+            value="{{item.value}}"
+            data-key="{{item.key}}"
+            bindblur="onOptionInt"
+          />
+          <view class="field__desc">{{item.desc}}</view>
+        </view>
+      </block>
+    </view>
+  </block>
+</view>

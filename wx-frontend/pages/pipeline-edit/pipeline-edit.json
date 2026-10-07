@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "任务配置",
+  "usingComponents": {
+    "sync-form": "../../components/sync-form/index"
+  }
+}
