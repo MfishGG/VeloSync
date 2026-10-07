@@ -17,6 +17,9 @@ frontend/dist/
 # 小程序静态预览产物（由 wx-frontend/tools/make_preview.js 生成）
 wx-frontend/preview/
 
+# 本地文档（申请材料、草稿等，仅本地留存，不进版本库）
+docs/
+
 *.local
 
 # IDE / 系统
