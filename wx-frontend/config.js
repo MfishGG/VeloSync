@@ -25,14 +25,14 @@
  */
 
 /** 当前环境：开发时用 local，真机连电脑用 device，正式发布用 cloud */
-const env = "local";
+const env = "cloud";
 
 /** 本地联调地址 */
 const LOCAL_BASE_URL = "http://127.0.0.1:8000/api";
 /** 真机预览连电脑：换成电脑的局域网地址（手机与电脑需同一 WiFi） */
 const DEVICE_BASE_URL = "http://192.168.31.254:8000/api";
-/** 生产（微信云托管）地址：部署后把这里换成实际域名，再把 env 切成 "cloud" */
-const CLOUD_BASE_URL = "https://REPLACE_WITH_YOUR_CLOUD_HOST/api";
+/** 生产（微信云托管）地址 */
+const CLOUD_BASE_URL = "https://django-xu8d-324494-11-1501612653.sh.run.tcloudbase.com/api";
 
 /** 环境预设：改 env 即可切换 */
 const ENV_PRESETS = {
@@ -48,7 +48,7 @@ const config = {
    * 配置版本戳：改动 env / 后端地址后，把这里同步改一下（任意字符串）。
    * app.js 用它判断本地缓存的后端地址是否过期，避免「改了配置却仍连旧地址」。
    */
-  configStamp: "2026-10-07-cloud-1",
+  configStamp: "2026-10-08-cloud-1",
 
   /** 生产（微信云托管）域名，方便设置页展示与一键切到线上 */
   cloudBaseUrl: CLOUD_BASE_URL,
