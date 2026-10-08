@@ -17,12 +17,8 @@ function qs(params) {
 }
 
 // ---------------- 认证 ----------------
+// 小程序端仅支持微信登录，故不提供账密登录 / 注册（网页端仍走 /auth/login/）。
 const auth = {
-  login: (username, password) =>
-    api("/auth/login/", { method: "POST", data: { username, password } }),
-
-  register: (payload) => api("/auth/register/", { method: "POST", data: payload }),
-
   me: () => api("/auth/me/"),
 
   refresh: (refresh) => api("/auth/refresh/", { method: "POST", data: { refresh } }),
@@ -33,6 +29,12 @@ const auth = {
 
   /** 查询小程序登录模式（oauth：已配置 AppID；mock：演示身份） */
   wxMiniProgramMode: () => api("/auth/wx/miniprogram/"),
+
+  /** 绑定手机号：code 由 getPhoneNumber 回调得到（仅作展示/联系方式，非登录身份） */
+  bindPhone: (code) => api("/auth/phone/", { method: "POST", data: { code } }),
+
+  /** 更新昵称 / 头像（微信「头像昵称填写能力」的结果提交到这里） */
+  updateProfile: (payload) => api("/auth/profile/", { method: "PATCH", data: payload }),
 };
 
 // ---------------- 平台与账号 ----------------

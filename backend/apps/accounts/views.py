@@ -5,6 +5,7 @@ from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.shortcuts import redirect
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -13,6 +14,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView  # noqa: F401 （路由复用）
 
 from . import social
+from .models import UserProfile
 from .serializers import RegisterSerializer, UserSerializer
 from .social import PROVIDER_META, SocialError
 
@@ -70,6 +72,116 @@ class MeView(APIView):
             User.objects.filter(pk=request.user.pk).prefetch_related("social_accounts").first()
         ) or request.user
         return Response(UserSerializer(user).data)
+
+
+class BindPhoneView(APIView):
+    """POST /api/auth/phone/ —— 绑定 / 换绑手机号
+
+    手机号在本项目**仅作展示与联系方式**，不承担登录身份，因此：
+    - 允许重复（不做唯一约束）；
+    - 允许后续换绑；
+    - 只接受微信 `getPhoneNumber` 的动态令牌换取的真实号码，不接受前端直接传号码
+      （前端不是安全边界，直接传号码等于任何人都能伪造）。
+    """
+
+    def post(self, request):
+        code = (request.data.get("code") or "").strip()
+        if not code:
+            return Response(
+                {"detail": "缺少手机号授权凭证 code"}, status=status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            phone = social.exchange_phone_number(code)
+        except SocialError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        profile.phone = phone
+        profile.phone_bound_at = timezone.now()
+        profile.save(update_fields=["phone", "phone_bound_at", "updated_at"])
+
+        user = (
+            User.objects.filter(pk=request.user.pk).prefetch_related("social_accounts").first()
+        ) or request.user
+        return Response(UserSerializer(user).data)
+
+
+# 头像上限。前端用 canvas 压到 200KB 以内再传，这里留一倍余量防止绕过前端。
+AVATAR_MAX_BYTES = 400 * 1024
+# 只收 dataURL 形式的图片与 http(s) 远程地址，杜绝 javascript: 之类被当成 URL 用
+_AVATAR_DATA_URL_PREFIX = "data:image/"
+
+
+def _validate_avatar(value: str) -> str:
+    """校验并归一化头像值；不合法则抛 ValueError（由调用方转 400）。"""
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if value.startswith(_AVATAR_DATA_URL_PREFIX):
+        if ";base64," not in value:
+            raise ValueError("头像 dataURL 必须是 base64 编码")
+        # base64 约 4/3 膨胀，反推原始字节数做体积校验
+        b64 = value.split(";base64,", 1)[1]
+        if len(b64) * 3 // 4 > AVATAR_MAX_BYTES:
+            raise ValueError("头像文件过大，请压缩后重试")
+        return value
+    if value.startswith("http://") or value.startswith("https://"):
+        if len(value) > 2048:
+            raise ValueError("头像链接过长")
+        return value
+    raise ValueError("头像格式不支持，仅接受图片 dataURL 或 http(s) 链接")
+
+
+class UpdateProfileView(APIView):
+    """PATCH /api/auth/profile/ —— 更新昵称 / 头像
+
+    背景：微信自 2022-10-24 起收紧 `getUserProfile`，回调一律返回灰色默认头像
+    与「微信用户」占位昵称，无法再一键授权拿到真实资料。官方替代方案是
+    「头像昵称填写能力」——由用户主动选头像（`open-type="chooseAvatar"`）+
+    填昵称（`<input type="nickname">`）。本接口承接其结果。
+
+    昵称同时写入 `user.first_name` 与微信绑定的 `SocialAccount.nickname`，
+    保证个人页、工作台、绑定列表三处显示一致。
+    """
+
+    def patch(self, request):
+        updates = {}
+        if "nickname" in request.data:
+            nickname = (request.data.get("nickname") or "").strip()
+            if len(nickname) > 50:
+                return Response(
+                    {"detail": "昵称过长（最多 50 字）"}, status=status.HTTP_400_BAD_REQUEST
+                )
+            updates["nickname"] = nickname
+
+        if "avatar" in request.data:
+            try:
+                updates["avatar"] = _validate_avatar(request.data.get("avatar"))
+            except ValueError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not updates:
+            return Response(
+                {"detail": "没有需要更新的字段"}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = request.user
+        if "nickname" in updates:
+            nickname = updates["nickname"]
+            user.first_name = nickname
+            user.save(update_fields=["first_name"])
+            # 同步到微信绑定，避免「个人页显示 A、绑定列表显示 B」
+            user.social_accounts.filter(provider="wechat").update(nickname=nickname)
+
+        if "avatar" in updates:
+            profile, _ = UserProfile.objects.get_or_create(user=user)
+            profile.avatar = updates["avatar"]
+            profile.save(update_fields=["avatar", "updated_at"])
+
+        full = (
+            User.objects.filter(pk=user.pk).prefetch_related("social_accounts").first()
+        ) or user
+        return Response(UserSerializer(full).data)
 
 
 # ---------------- 第三方快捷登录（微信 / QQ / 微博）----------------

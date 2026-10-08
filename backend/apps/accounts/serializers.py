@@ -19,10 +19,40 @@ class UserSerializer(serializers.ModelSerializer):
     # 主头像：取第一个有头像的第三方绑定；无绑定则为空串，前端自行回退
     avatar = serializers.SerializerMethodField()
     social = serializers.SerializerMethodField()
+    # 手机号仅作展示 / 联系方式，不承担登录身份。同时返回脱敏值供列表场景直接使用。
+    phone = serializers.SerializerMethodField()
+    phone_masked = serializers.SerializerMethodField()
+    phone_bound = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ["id", "username", "email", "nickname", "avatar", "social", "date_joined"]
+        fields = [
+            "id",
+            "username",
+            "email",
+            "nickname",
+            "avatar",
+            "social",
+            "phone",
+            "phone_masked",
+            "phone_bound",
+            "date_joined",
+        ]
+
+    def _profile(self, obj):
+        return getattr(obj, "profile", None)
+
+    def get_phone(self, obj) -> str:
+        profile = self._profile(obj)
+        return (profile.phone if profile else "") or ""
+
+    def get_phone_masked(self, obj) -> str:
+        profile = self._profile(obj)
+        return profile.phone_masked if profile else ""
+
+    def get_phone_bound(self, obj) -> bool:
+        profile = self._profile(obj)
+        return bool(profile and profile.phone)
 
     def _bindings(self, obj):
         # 预取避免 N+1；未预取时按需查询
@@ -30,6 +60,11 @@ class UserSerializer(serializers.ModelSerializer):
         return cached if cached is not None else list(obj.social_accounts.all())
 
     def get_avatar(self, obj) -> str:
+        # 用户自设头像优先于第三方头像：前者是明确意图，后者只是兜底。
+        # 微信回调的头像 URL 会过期，用户主动设置的不会。
+        profile = self._profile(obj)
+        if profile and profile.avatar:
+            return profile.avatar
         for acc in self._bindings(obj):
             if acc.avatar_url:
                 return acc.avatar_url

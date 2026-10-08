@@ -25,22 +25,9 @@ function deviceId() {
 
 Page({
   data: {
-    tab: "login",
     loading: false,
     error: "",
-    notice: "",
     providersFailed: false,
-
-    // 登录表单
-    username: "demo",
-    password: "demo123456",
-
-    // 注册表单
-    rUsername: "",
-    rNickname: "",
-    rEmail: "",
-    rPassword: "",
-    rConfirm: "",
 
     wxMode: "mock",
     /** 是否成功问过后端。false 时界面不能断言「后端未配置」，只能说「没问到」 */
@@ -149,18 +136,7 @@ Page({
       error: "",
     });
     this.toast("接口地址已保存");
-    this.loadProviders();
     this.loadWxMode();
-  },
-
-  switchTab(e) {
-    const tab = e.currentTarget.dataset.tab;
-    this.setData({ tab, error: "" });
-  },
-
-  onInput(e) {
-    const field = e.currentTarget.dataset.field;
-    this.setData({ [field]: e.detail.value });
   },
 
   toast(msg, icon) {
@@ -183,47 +159,10 @@ Page({
       error: offline
         ? `无法连接后端（${this.data.baseUrlHost}）：请确认地址正确、后端已启动、手机与电脑处于同一网络`
         : msg,
-      notice: "",
     });
   },
 
-  // ---------------- 账密登录 ----------------
-  submitLogin() {
-    const { username, password } = this.data;
-    if (!username.trim()) return this.toast("请输入用户名");
-    if (!password) return this.toast("请输入密码");
-    this.setData({ loading: true, error: "" });
-    api.auth
-      .login(username.trim(), password)
-      .then((res) => this.afterLogin(res))
-      .catch((err) => this.handleError(err))
-      .then(() => this.setData({ loading: false }));
-  },
-
-  // ---------------- 注册 ----------------
-  submitRegister() {
-    const { rUsername, rNickname, rEmail, rPassword, rConfirm } = this.data;
-    if (!rUsername.trim()) return this.toast("请输入用户名");
-    if (rUsername.trim().length < 3) return this.toast("用户名至少 3 个字符");
-    if (!rPassword) return this.toast("请输入密码");
-    if (rPassword.length < 6) return this.toast("密码至少 6 位");
-    if (rPassword !== rConfirm) return this.toast("两次输入的密码不一致");
-    if (rEmail && !/^\S+@\S+\.\S+$/.test(rEmail)) return this.toast("邮箱格式不正确");
-
-    this.setData({ loading: true, error: "" });
-    api.auth
-      .register({
-        username: rUsername.trim(),
-        password: rPassword,
-        email: (rEmail || "").trim(),
-        nickname: (rNickname || "").trim(),
-      })
-      .then((res) => this.afterLogin(res, "注册成功"))
-      .catch((err) => this.handleError(err))
-      .then(() => this.setData({ loading: false }));
-  },
-
-  // ---------------- 微信一键登录 ----------------
+  // ---------------- 微信一键登录（唯一登录方式） ----------------
   wxLogin() {
     this.setData({ loading: true, error: "" });
     const identity = deviceId();

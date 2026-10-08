@@ -71,6 +71,120 @@
   transform: rotate(90deg);
 }
 
+/* ---------------- 个人资料（头像 / 昵称 / 手机号） ---------------- */
+.profile {
+  background: #fff;
+  border-radius: 28rpx;
+  margin-top: 20rpx;
+  overflow: hidden;
+  box-shadow: 0 4rpx 16rpx rgba(15, 23, 42, 0.05);
+}
+.profile__row {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  padding: 26rpx;
+  border-bottom: 2rpx solid var(--line-soft);
+}
+.profile__row:last-of-type {
+  border-bottom: none;
+}
+/* button 重置：微信默认按钮有边框、圆角与最小宽度，会破坏行布局 */
+.profile__row--btn {
+  width: 100%;
+  margin: 0;
+  background: transparent;
+  border-radius: 0;
+  text-align: left;
+  line-height: normal;
+  font-size: inherit;
+  color: inherit;
+}
+.profile__row--btn::after {
+  border: none;
+}
+.profile__row--btn:active,
+.profile__row:active {
+  background: #f8fafc;
+}
+.profile__label {
+  flex-shrink: 0;
+  width: 120rpx;
+  font-size: 27rpx;
+  color: var(--t2);
+}
+.profile__value {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+.profile__avatar {
+  width: 76rpx;
+  height: 76rpx;
+  border-radius: 50%;
+  background: #f1f5f9;
+  display: block;
+}
+.profile__avatar--fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary-soft);
+}
+.profile__avatar-logo {
+  width: 46rpx;
+  height: 46rpx;
+}
+.profile__input {
+  min-width: 0;
+  text-align: right;
+  font-size: 27rpx;
+  color: var(--t1);
+}
+.profile__phone {
+  font-size: 27rpx;
+  color: var(--t1);
+  font-family: Consolas, Menlo, monospace;
+}
+.profile__ph,
+.profile__ph-text {
+  font-size: 27rpx;
+  color: var(--t3);
+}
+.profile__hint {
+  flex-shrink: 0;
+  font-size: 22rpx;
+  color: var(--t3);
+}
+/* 绑定手机号：做成小胶囊链接，与 ids__copy 同一视觉语言 */
+.profile__link {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 4rpx 20rpx;
+  min-width: 0;
+  line-height: 1.6;
+  font-size: 22rpx;
+  color: var(--primary);
+  background: var(--primary-soft);
+  border-radius: 999rpx;
+}
+.profile__link::after {
+  border: none;
+}
+.profile__arrow {
+  flex-shrink: 0;
+  font-size: 34rpx;
+  color: #cbd5e1;
+  line-height: 1;
+}
+.profile__tip {
+  font-size: 20rpx;
+  color: var(--t3);
+  padding: 14rpx 26rpx 18rpx;
+  text-align: center;
+}
+
 /* ---------------- 账号信息（展开区） ---------------- */
 .ids {
   background: #fff;

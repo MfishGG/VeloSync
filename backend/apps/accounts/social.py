@@ -289,6 +289,44 @@ def miniprogram_profile(
     }
 
 
+def exchange_phone_number(code: str) -> str:
+    """用 getPhoneNumber 返回的动态令牌换取手机号明文。
+
+    新版规范（基础库 2.21.2+）：前端 `button open-type="getPhoneNumber"` 回调里拿到的是
+    一次性 `code`（**不是**旧版的 encryptedData / iv），后端拿它调微信
+    `phonenumber.getPhoneNumber` 消费，直接取回明文手机号 —— 无需自行 AES 解密，
+    也就无需维护 session_key。该 code 有效期 5 分钟且只能消费一次。
+
+    注意：此 code 与 wx.login 的 code 用途不同，不可混用。
+    """
+    cfg = getattr(settings, "WECHAT_MINIPROGRAM", {}) or {}
+    if not (cfg.get("app_id") and cfg.get("app_secret")):
+        raise SocialError("后端未配置小程序凭证（WECHAT_MP_APP_ID / WECHAT_MP_APP_SECRET），无法获取手机号")
+    if not code:
+        raise SocialError("缺少手机号授权凭证")
+
+    # 该接口需用 access_token 鉴权（与 code2session 不同，不走 appid+secret 直传）
+    token_data = _http_json(
+        "https://api.weixin.qq.com/cgi-bin/token?"
+        f"grant_type=client_credential&appid={cfg['app_id']}&secret={cfg['app_secret']}"
+    )
+    if not isinstance(token_data, dict) or not token_data.get("access_token"):
+        raise SocialError(f"获取微信 access_token 失败：{(token_data or {}).get('errmsg') or token_data}")
+
+    result = _http_json(
+        f"https://api.weixin.qq.com/wxa/business/getuserphonenumber"
+        f"?access_token={token_data['access_token']}",
+        {"code": code},
+    )
+    if not isinstance(result, dict) or result.get("errcode"):
+        raise SocialError(f"获取手机号失败：{(result or {}).get('errmsg') or result}")
+
+    phone = ((result.get("phone_info") or {}).get("phoneNumber") or "").strip()
+    if not phone:
+        raise SocialError("微信未返回手机号")
+    return phone
+
+
 def get_or_create_user(provider: str, profile: dict) -> tuple[User, bool]:
     """按 (provider, openid) 查找绑定；不存在则自动注册新账号并绑定"""
     openid = profile.get("openid") or ""
