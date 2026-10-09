@@ -88,7 +88,7 @@ class TaskPlanner:
 
     def collect_activities(self) -> tuple[list[Activity], dict]:
         """按来源取活动并应用时间窗与选项过滤，返回 (活动列表, 统计)。"""
-        stats = {"fetched": 0, "out_of_range": 0, "no_gps": 0}
+        stats = {"fetched": 0, "out_of_range": 0, "no_gps": 0, "imported": 0}
         start, end = self.window()
 
         if self.source_type == "fit":
@@ -114,10 +114,12 @@ class TaskPlanner:
         account = self.source_account
         if account is None:
             return [], stats
-        try:
-            fetched = get_adapter(account).fetch_activities(since=start) or []
-        except AdapterError:
-            fetched = []
+        # ⚠️ 不要在这里吞掉 AdapterError。
+        # 四个真实平台的适配器目前全是骨架（每个方法都抛 AdapterError），
+        # 吞掉之后用户看到的是「执行完成：success（0 条已同步）」，
+        # 而真相是「这个平台根本没实现」—— 用户完全无法判断是自己配错了还是产品没做完，
+        # 日志也会一路显示成功。让它抛上去，由节点级 error 如实记录原因。
+        fetched = get_adapter(account).fetch_activities(since=start) or []
         created: list[Activity] = []
         for item in fetched:
             ts = item.get("start_timestamp")
@@ -143,6 +145,7 @@ class TaskPlanner:
                 source_activity_id=str(item.get("remote_id") or ""),
                 fit_hash=item.get("fit_hash") or "",
             )
+            stats["imported"] += 1
             created.append(activity)
         return created, stats
 
@@ -385,7 +388,12 @@ class PipelineEngine:
         self.planner.source_type = source_type
         self.planner.source_account = source_account
 
-        activities, stats = self.planner.collect_activities()
+        dry_run = bool((self.pipeline.options or {}).get("dry_run"))
+        try:
+            activities, stats = self.planner.collect_activities()
+        except AdapterError as exc:
+            # 拉取失败必须让用户看到原因，而不是变成「0 条、执行成功」
+            raise AdapterError(f"数据来源不可用：{exc}") from exc
         self.stats["activities"] = len(activities)
 
         if source_type == "fit":
@@ -400,8 +408,18 @@ class PipelineEngine:
                 raise ValueError("数据来源未绑定平台账号")
             self.log("info", f"{source_label(source_type)} 来源：拉取到 {len(activities)} 条记录")
 
-        for activity in activities:
-            self._init_sync_states(activity)
+        # 试运行对平台来源**有副作用**：collect_activities 会真实写入 Activity。
+        # 这是刻意的（去重需要这些记录才能判断），但此前完全没有提示，
+        # 用户点一次「试运行预览」就往活动库里灌了数据却毫不知情。这里如实告知。
+        if dry_run and stats.get("imported"):
+            self.log(
+                "warning",
+                f"[试运行] 已从 {source_label(source_type)} 导入 {stats['imported']} 条活动到本地活动库"
+                "（去重需要这些记录；如需纯净预览请改用 FIT 来源）",
+                detail={"imported": stats["imported"]},
+            )
+
+        self._init_sync_states(activities)
         return activities
 
     def _run_filter(self, node, activities: list) -> list:
@@ -409,25 +427,53 @@ class PipelineEngine:
         filtered = FilterRegistry.apply(node.config, activities)
         return filtered
 
-    def _init_sync_states(self, activity: Activity):
-        """为活动初始化所有平台的矩阵单元格：源平台=已同步，可上传平台=待同步，其余=不适用。"""
-        for platform in Platform.objects.filter(is_active=True):
-            if ActivitySyncState.objects.filter(activity=activity, platform=platform).exists():
-                continue
-            if platform.code == activity.source_platform:
-                ActivitySyncState.objects.create(
-                    activity=activity,
-                    platform=platform,
-                    status="synced",
-                    remote_activity_id=activity.source_activity_id,
-                    synced_at=activity.start_timestamp,
-                )
-            else:
-                ActivitySyncState.objects.create(
-                    activity=activity,
-                    platform=platform,
-                    status="pending" if (platform.capabilities or {}).get("upload") else "na",
-                )
+    def _init_sync_states(self, activities):
+        """为活动批量初始化所有平台的矩阵单元格。
+
+        源平台=已同步，可上传平台=待同步，其余=不适用。
+
+        早先是对**每条活动 × 每个平台**各做一次 `exists()` + 一次 `create()`：
+        50 条活动 × 5 个平台 = **500 次查询**，而且就在同步任务的关键路径上。
+        现在改成「一次查出已有组合 + 一次 bulk_create」。
+        """
+        activities = [a for a in (activities or []) if a is not None]
+        platforms = list(Platform.objects.filter(is_active=True))
+        if not activities or not platforms:
+            return
+
+        existing = set(
+            ActivitySyncState.objects.filter(
+                activity_id__in=[a.id for a in activities], platform__in=platforms
+            ).values_list("activity_id", "platform_id")
+        )
+
+        to_create: list[ActivitySyncState] = []
+        for activity in activities:
+            for platform in platforms:
+                if (activity.id, platform.id) in existing:
+                    continue
+                if platform.code == activity.source_platform:
+                    to_create.append(
+                        ActivitySyncState(
+                            activity=activity,
+                            platform=platform,
+                            status="synced",
+                            remote_activity_id=activity.source_activity_id,
+                            synced_at=activity.start_timestamp,
+                        )
+                    )
+                else:
+                    to_create.append(
+                        ActivitySyncState(
+                            activity=activity,
+                            platform=platform,
+                            status="pending" if (platform.capabilities or {}).get("upload") else "na",
+                        )
+                    )
+
+        if to_create:
+            # ignore_conflicts 兜住并发下重复插入（uk_activity_platform 唯一约束）
+            ActivitySyncState.objects.bulk_create(to_create, ignore_conflicts=True)
 
     def _run_target(self, node, activities: list):
         """目标节点：上传活动内容 + 账号类内容（资料/课程/路线/体重/睡眠…）。"""
@@ -538,11 +584,23 @@ class PipelineEngine:
             except Exception:  # noqa: BLE001
                 source_adapter = None
 
+        # FIT 来源没有对应的平台账号，拿不到「账号类内容」（资料/课程/路线/体重/睡眠…）。
+        # 早先这里会给 adapter.push_content() 推一个**空载荷**，然后记一条
+        # 「已同步「路线」到 XX（0 条）」的 success —— 用户看到的是成功，
+        # 实际什么都没发生。现在如实记为 skipped。
+        if source_adapter is None:
+            entry["status"] = "skipped"
+            self.stats["skipped"] += 1
+            self.stats["contents"][key] = entry
+            self.log(
+                "warning",
+                f"FIT 来源没有对应的平台账号，无法获取「{label}」，本次跳过",
+                detail=entry,
+            )
+            return
+
         try:
-            if source_adapter is None:
-                payload: dict = {}
-            else:
-                payload = source_adapter.fetch_content(key, window_start, window_end)
+            payload = source_adapter.fetch_content(key, window_start, window_end)
             count = len(payload.get("items") or []) if isinstance(payload, dict) else 0
             entry["items"] = count
 
@@ -567,6 +625,3 @@ class PipelineEngine:
             self.log("error", f"同步「{label}」到 {platform.name} 异常: {exc}")
 
         self.stats["contents"][key] = entry
-
-    def def_run_target(self, node, activities):  # pragma: no cover —— 兼容旧名，勿用
-        self._run_target(node, activities)
