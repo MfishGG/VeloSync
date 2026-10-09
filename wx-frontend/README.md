@@ -13,14 +13,14 @@
 | 仪表盘 | Recharts 饼图 + 折线 | `pages/dashboard` | Canvas 2D（`utils/chart.js` 的 `drawPie` / `drawTrend`） |
 | 同步任务列表 | TanStack Query 轮询 | `pages/pipelines` | 短轮询（小程序不支持 SSE） |
 | 新建任务向导 | 四步向导 | `pages/pipeline-new` | 四步分步校验，`components/sync-form` 复用 |
-| 任务编辑 / 执行图 | React Flow + SSE 实时变色 | `pages/pipeline-edit` | 自绘执行图 + `node--running` 脉冲动画 + 轮询刷新 |
+| 任务编辑 / 执行图 | React Flow + 短轮询实时变色 | `pages/pipeline-edit` | 自绘执行图 + `node--running` 脉冲动画 + 1.5s 轮询 `run-status/` |
 | 活动矩阵 | 二维表格 | `pages/matrix` | `scroll-x` 矩阵 + 点格同步 |
 | FIT 上传 / 历史 | `<input type=file>` | `pages/fit` | `wx.chooseMessageFile`（小程序唯一读本地文件途径） |
 | FIT 详情图表 | Recharts 双维度 + 叠加 | `pages/fit-detail` | 15 行分图（无数据留空白）+ 多指标叠加 |
 | GPS 轨迹回放 | 高德 JS API | `pages/fit-detail` | `map` 组件 polyline + 播放/暂停/倍速/进度条 |
 | 平台账号管理 | OAuth 授权跳转 | `pages/accounts` | **三级绑定兜底**，见第四节 |
 | 同步日志 | 表格 + 时间轴 | `pages/logs` | 级别 + 任务筛选，上拉加载 |
-| 设置 | 表单 | `pages/settings` | 接口地址热切换 + 连通性测试 |
+| 设置 | 表单 | `pages/settings` | 仅账号 / 清除缓存 / 关于 —— 开发者信息一律不上屏 |
 
 > 坐标纠偏（WGS-84 → GCJ-02）算法与后端 `apps/activities/coords.py`、Web 端 `utils/coords.ts` **同源**，见 `utils/coords.js`。
 
