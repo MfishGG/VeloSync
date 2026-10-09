@@ -13,6 +13,7 @@ import type {
   Platform,
   PlatformAccount,
   RunStats,
+  RunStatus,
   SocialAuthorizeResult,
   SocialLoginResult,
   SocialProvider,
@@ -230,6 +231,20 @@ export function useRunPipeline(id: number) {
       qc.invalidateQueries({ queryKey: qk.logs("") });
     },
   });
+}
+
+/**
+ * 查询某条任务某次运行的实时状态（短轮询）。
+ *
+ * 取代原来的 SSE `/stream/` 长连接：那个端点在服务端用 `while + sleep(1)`
+ * 最长挂 600 秒、每秒查一次库，单个连接独占一个请求槽位，而全站并发槽位
+ * 只有 8 个（gunicorn --workers 2 --threads 4）——**8 个并发打开任务详情页的
+ * 用户就能让整个 API 停止响应，包括探针调用的 /api/health/**，
+ * 探针失败则容器被重启。短轮询无状态，天然没有这个问题。
+ */
+export function fetchRunStatus(id: number, runId?: number) {
+  const suffix = runId ? `?run_id=${runId}` : "";
+  return api<RunStatus>(`/pipelines/${id}/run-status/${suffix}`);
 }
 
 /** 立即运行某条同步任务（列表页直接调用，避免 hook 绑定 id 的时序问题） */

@@ -157,7 +157,7 @@ function upload(path, filePath, name, formData) {
   });
 }
 
-/** SSE 替代：小程序无 EventSource，用短轮询查询执行状态 */
+/** 短轮询查询执行状态（小程序无 EventSource；后端也没有 SSE 端点） */
 function poll(fn, { interval = 1200, timeout = 60000 } = {}) {
   const start = Date.now();
   return new Promise((resolve, reject) => {

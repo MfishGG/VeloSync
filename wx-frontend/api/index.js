@@ -60,6 +60,15 @@ const pipelines = {
 
   run: (id) => api(`/pipelines/${id}/run/`, { method: "POST" }),
 
+  /**
+   * 轮询某次运行的状态（节点状态 + 执行统计 + done 终态标记）。
+   *
+   * 取代已移除的 SSE 端点：那个端点最长挂 600 秒、独占一个请求槽位，
+   * 而服务端只有 8 个并发槽位，几个用户就能把整个 API 拖死。
+   */
+  runStatus: (id, runId) =>
+    api(`/pipelines/${id}/run-status/${runId ? `?run_id=${runId}` : ""}`),
+
   /** 规格目录：来源 / 内容 / 选项 / 可绑账号 / FIT 记录 */
   syncSpec: () => api("/pipelines/sync-spec/"),
 

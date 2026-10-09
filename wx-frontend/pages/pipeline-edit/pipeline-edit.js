@@ -233,16 +233,15 @@ Page({
   },
 
   pollRun(id) {
-    const terminal = ["success", "partial", "error"];
     return new Promise((resolve) => {
       let tries = 0;
       const tick = () => {
         tries += 1;
         api.pipelines
-          .detail(id)
-          .then((p) => {
-            if (terminal.indexOf(p.last_run_status) >= 0 || tries > 30) {
-              resolve({ status: p.last_run_status || "pending", stats: {} });
+          .runStatus(id)
+          .then((s) => {
+            if (s.done || tries > 30) {
+              resolve({ status: s.status || "pending", stats: s.stats || {} });
               return;
             }
             setTimeout(tick, 1200);

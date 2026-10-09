@@ -103,18 +103,17 @@ Page({
       });
   },
 
-  /** 非 EAGER 模式下轮询任务详情，直到出现终态 */
+  /** 异步派发后轮询运行状态，直到出现终态（取代已移除的 SSE 长连接） */
   pollRun(id) {
-    const terminal = ["success", "partial", "error"];
     return new Promise((resolve) => {
       let tries = 0;
       const tick = () => {
         tries += 1;
         api.pipelines
-          .detail(id)
-          .then((p) => {
-            if (terminal.indexOf(p.last_run_status) >= 0 || tries > 30) {
-              resolve({ status: p.last_run_status || "pending", stats: {} });
+          .runStatus(id)
+          .then((s) => {
+            if (s.done || tries > 30) {
+              resolve({ status: s.status || "pending", stats: s.stats || {} });
               return;
             }
             setTimeout(tick, 1200);

@@ -13,8 +13,8 @@ import {
   Save,
   ScanEye,
 } from "lucide-react";
-import { getAccessToken } from "../api/client";
 import {
+  fetchRunStatus,
   qk,
   usePipeline,
   usePreviewSyncTask,
@@ -28,6 +28,9 @@ import type { VeloNodeData } from "../components/pipeline/types";
 import SyncTaskForm from "../components/sync/SyncTaskForm";
 
 const nodeTypes = { velo: VeloNode };
+
+/** 运行状态轮询间隔（毫秒）。取代原 SSE 长连接 */
+const POLL_INTERVAL_MS = 1500;
 
 const toConfig = (p: Pipeline): SyncTaskConfig => ({
   name: p.name,
@@ -61,12 +64,24 @@ export default function PipelineEditorPage() {
   const [preview, setPreview] = useState<SyncPreview | null>(null);
   const loadedRef = useRef(false);
   const toastTimer = useRef<number | undefined>(undefined);
+  /** 运行状态轮询的定时器与停止标记（取代原 SSE 长连接） */
+  const pollTimer = useRef<number | undefined>(undefined);
+  const pollingStopped = useRef(true);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(null), 3600);
   }, []);
+
+  // 离开页面时停掉轮询，避免组件卸载后仍在后台发请求
+  useEffect(
+    () => () => {
+      pollingStopped.current = true;
+      window.clearTimeout(pollTimer.current);
+    },
+    []
+  );
 
   // 初次加载：后端配置 → 表单
   useEffect(() => {
@@ -137,47 +152,55 @@ export default function PipelineEditorPage() {
     try {
       await save(true);
       const result = await runMutation.mutateAsync();
+      const runId = result.id;
       setLastStats(result.stats ?? null);
       setRunning(true);
       setNodeStatus({});
       showToast("🚀 同步任务已开始执行…");
 
-      const es = new EventSource(
-        `/api/pipelines/${pipelineId}/stream/?access_token=${getAccessToken() ?? ""}`
-      );
-      es.onmessage = (ev) => {
-        const payload = JSON.parse(ev.data) as {
-          status: string;
-          nodes: Record<string, { status: string }>;
-          stats?: RunStats;
-        };
-        const mapped: Record<string, string> = {};
-        Object.entries(payload.nodes ?? {}).forEach(([k, v]) => {
-          mapped[`n${k}`] = v.status;
-        });
-        setNodeStatus(mapped);
-        if (payload.stats && Object.keys(payload.stats).length) setLastStats(payload.stats);
-        if (["success", "partial", "error"].includes(payload.status)) {
-          es.close();
-          setRunning(false);
-          showToast(
-            payload.status === "success"
-              ? "✅ 同步任务执行完成"
-              : payload.status === "partial"
-                ? "⚠️ 部分内容同步失败"
-                : "❌ 同步任务执行失败"
-          );
-          void queryClient.invalidateQueries({ queryKey: qk.matrix });
-          void queryClient.invalidateQueries({ queryKey: qk.dashboard });
-          void queryClient.invalidateQueries({ queryKey: qk.logs("") });
-          void queryClient.invalidateQueries({ queryKey: qk.pipeline(pipelineId) });
-        }
-      };
-      es.onerror = () => {
-        es.close();
+      // 短轮询取代原来的 EventSource。
+      // 原 SSE 端点在服务端最长挂 600 秒且独占一个请求槽位，全站只有 8 个槽位 ——
+      // 8 个并发打开本页的用户就能让整个 API（含健康检查）停止响应。
+      pollingStopped.current = false;
+      const finish = (finalStatus: string) => {
+        pollingStopped.current = true;
+        window.clearTimeout(pollTimer.current);
         setRunning(false);
+        showToast(
+          finalStatus === "success"
+            ? "✅ 同步任务执行完成"
+            : finalStatus === "partial"
+              ? "⚠️ 部分内容同步失败"
+              : "❌ 同步任务执行失败"
+        );
+        void queryClient.invalidateQueries({ queryKey: qk.matrix });
+        void queryClient.invalidateQueries({ queryKey: qk.dashboard });
+        void queryClient.invalidateQueries({ queryKey: qk.logs("") });
+        void queryClient.invalidateQueries({ queryKey: qk.pipeline(pipelineId) });
       };
+
+      const tick = async () => {
+        if (pollingStopped.current) return;
+        try {
+          const payload = await fetchRunStatus(pipelineId, runId);
+          const mapped: Record<string, string> = {};
+          Object.entries(payload.nodes ?? {}).forEach(([k, v]) => {
+            mapped[`n${k}`] = v.status;
+          });
+          setNodeStatus(mapped);
+          if (payload.stats && Object.keys(payload.stats).length) setLastStats(payload.stats);
+          if (payload.done) {
+            finish(payload.status);
+            return;
+          }
+        } catch {
+          // 单次请求失败（网络抖动 / 后端重启）不终止轮询，下一轮继续
+        }
+        pollTimer.current = window.setTimeout(tick, POLL_INTERVAL_MS);
+      };
+      void tick();
     } catch (err) {
+      pollingStopped.current = true;
       setRunning(false);
       showToast(err instanceof Error ? err.message : "执行失败");
     }

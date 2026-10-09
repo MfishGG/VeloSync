@@ -242,6 +242,19 @@ export interface RunStats {
   contents: Record<string, { status: string; items: number }>;
 }
 
+/** GET /pipelines/{id}/run-status/ 的响应（取代原 SSE stream） */
+export interface RunStatus {
+  run_id: number | null;
+  pipeline_id?: number;
+  status: string;
+  nodes: Record<string, { status: string; message?: string; updated_at?: string }>;
+  stats?: RunStats;
+  started_at?: string | null;
+  finished_at?: string | null;
+  /** 服务端给出的终态判定，前端不必自己维护终态集合 */
+  done?: boolean;
+}
+
 export interface ActivitySyncState {
   id: number;
   platform: number;
