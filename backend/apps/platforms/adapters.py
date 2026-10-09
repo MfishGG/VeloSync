@@ -8,13 +8,18 @@
 未实现的账号类内容会抛出 NotImplementedError，引擎记为「预留」并跳过，不会中断任务。
 """
 import hashlib
+import logging
 import random
 from abc import ABC, abstractmethod
 from datetime import timedelta
 
+import requests
 from django.utils import timezone
 
 from .models import PlatformAccount
+from .tokens import ensure_fresh_token
+
+logger = logging.getLogger(__name__)
 
 
 class AdapterError(Exception):
@@ -57,6 +62,15 @@ class BaseAdapter(ABC):
     def push_content(self, key: str, payload: dict) -> str:
         """把某类内容写入目标账号，返回远端标识。默认未实现。"""
         raise ContentNotSupported(f"{self.account.platform.name} 暂不支持写入「{key}」")
+
+    def revoke_token(self) -> bool:
+        """通知平台撤销本账号的授权。默认无此能力。
+
+        合规要求：Strava 明确要求用户在应用内解除授权时，应用应调用
+        `POST /oauth/deauthorize`。此前解绑只删了本地记录，平台侧授权仍然有效 ——
+        用户以为已断开、实际没有。
+        """
+        return False
 
 
 class MockAdapter(BaseAdapter):
@@ -166,7 +180,16 @@ class OAuthAdapter(BaseAdapter):
             )
         if not platform.api_base:
             raise AdapterError(f"{platform.name} 尚未配置 api_base（接口地址），请在平台表补充")
+
+        # 先刷新再取用：access token 往往只有几小时，直接拿去请求必然 401，
+        # 而 401 又会被误判成「用户没授权」。这里在过期前主动换新。
+        ensure_fresh_token(self.account)
+
         if not self.account.get_access_token():
+            if self.account.token_error:
+                raise AdapterError(
+                    f"{platform.name} 的 Token 无法解密：{self.account.token_error}"
+                )
             raise AdapterError(f"{platform.name} 的账号未授权或 Token 已失效，请在「账号管理」重新授权")
 
     def fetch_activities(self, since=None) -> list[dict]:
@@ -184,6 +207,10 @@ class OAuthAdapter(BaseAdapter):
     def check_exists(self, start_timestamp):
         return None
 
+    def revoke_token(self) -> bool:
+        """默认实现：不声明 deauthorize 端点的平台，只能本地解绑。"""
+        return False
+
 
 class IGPSPORTAdapter(OAuthAdapter):
     code = "igpsport"
@@ -195,6 +222,25 @@ class GarminAdapter(OAuthAdapter):
 
 class StravaAdapter(OAuthAdapter):
     code = "strava"
+
+    #: Strava 明确要求撤销授权时调用该端点，否则平台侧授权仍然有效
+    DEAUTHORIZE_URL = "https://www.strava.com/oauth/deauthorize"
+
+    def revoke_token(self) -> bool:
+        """调用 Strava deauthorize 真正撤销授权。"""
+        token = self.account.get_access_token()
+        if not token:
+            return False
+        try:
+            resp = requests.post(self.DEAUTHORIZE_URL, data={"access_token": token}, timeout=(5, 20))
+        except requests.RequestException as exc:
+            logger.warning("Strava deauthorize 请求失败：%s", exc)
+            return False
+        # Strava 无论成功与否都返回 200，靠 body 判断；失败不阻断本地解绑
+        ok = resp.status_code == 200
+        if not ok:
+            logger.warning("Strava deauthorize 返回 HTTP %s", resp.status_code)
+        return ok
 
 
 class CorosAdapter(OAuthAdapter):
