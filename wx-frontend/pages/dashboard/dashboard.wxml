@@ -45,7 +45,7 @@
     </view>
 
     <!-- 最近同步 -->
-    <view class="card" style="position: relative; left: 0rpx; top: 50rpx">
+    <view class="card" style="position: relative; left: 0rpx; top: 69rpx">
       <view class="card__title">最近同步</view>
       <view class="empty" wx:if="{{recent.length === 0}}">
         <view class="empty__icon">🗂</view>还没有同步记录，去「同步任务」跑一次试试
