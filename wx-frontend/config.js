@@ -13,8 +13,9 @@
  *     - "cloud"  正式环境：微信云托管分配的 HTTPS 域名（见下方 cloudBaseUrl）
  *                 域名须已在小程序后台「开发管理 → 服务器域名 → request 合法域名」登记。
  *
- *   临时改地址：登录页底部与设置页的「接口地址」入口，改完存在本地、
- *   优先级高于本文件（见 utils/request.js 的 setBaseUrl）。
+ *   临时改地址：仅开发版/体验版的登录页底部保留「接口地址」入口（设置页那块
+ *   已整体移除），改完存在本地、优先级高于本文件（见 utils/request.js 的 setBaseUrl）。
+ *   正式版不读这个缓存 —— 见 app.js 的 onLaunch 与 utils/env.js。
  *
  * 【平台官方小程序】officialMiniPrograms
  *   微信不允许小程序直接唤起第三方 App，官方渠道是「跳转对方的微信小程序」。

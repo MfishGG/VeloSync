@@ -3,26 +3,15 @@ const api = require("../../api/index");
 const auth = require("../../utils/auth");
 const request = require("../../utils/request");
 const config = require("../../config");
+const env = require("../../utils/env");
 
 const DEVICE_KEY = "velosync_device_id";
 const BASE_URL_KEY = "velosync_base_url";
 
-/**
- * 当前是否为「非正式版」。
- *
- * 发布版里必须隐藏「接口地址」编辑入口 —— 它本来只是开发期方便联调的设计，
- * 但在正式版里等于一条 Token 外泄通道：任何诱导（截图教程、群消息
- * 「改下地址就能用」）都能让用户在不知情下把 `Authorization: Bearer <JWT>`
- * 发到攻击者服务器。而终端用户看到「接口地址」这种词也只会困惑。
- */
-function isDevVersion() {
-  try {
-    const info = wx.getAccountInfoSync ? wx.getAccountInfoSync().miniProgram || {} : {};
-    return (info.envVersion || "develop") !== "release";
-  } catch (e) {
-    return false; // 拿不到就按正式版处理（宁可少一个开发入口，也不外泄凭据）
-  }
-}
+// 发布版必须隐藏「接口地址」编辑入口 —— 它是这里仅存的开发入口，
+// 也是唯一还保留的调试通道（设置页的那块已整体移除）。
+// 判定逻辑统一走 utils/env，避免多处拷贝漂移出安全缺口。
+const isDevVersion = env.isDevVersion;
 
 /** 从完整 URL 中取出主机部分，供界面提示用 */
 function hostOf(url) {

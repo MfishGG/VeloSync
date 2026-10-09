@@ -9,10 +9,11 @@
 
   <block wx:if="{{!loading}}">
     <!-- 可绑定平台 -->
+    <!-- 这里是终端用户界面：「三级兜底」那套开发者口径只留在后台 admin 与 README -->
     <view class="card">
       <view class="card__title">可绑定的平台</view>
       <view class="card__hint">
-        微信不允许小程序直接唤起第三方 App，绑定按「官方小程序 → 官方 App → 演示身份」三级兜底
+        选择平台完成授权，之后即可自动同步该平台的运动记录
       </view>
 
       <view class="pcard" wx:for="{{platforms}}" wx:key="id">
@@ -31,16 +32,10 @@
           </view>
         </view>
 
-        <view class="wrap" style="margin-top:14rpx">
-          <view class="chip {{item.channelTint}}">{{item.channelLabel}}</view>
-          <view class="chip {{item.oauth_ready ? 'chip--success' : 'chip--warning'}}">
-            {{item.oauth_ready ? '凭证已配置' : '凭证未配置'}}
-          </view>
-          <view class="chip" wx:if="{{item.miniprogram_appid}}">官方小程序</view>
-        </view>
+        <view class="pcard__hint" style="margin-top:14rpx">{{item.bindHint}}</view>
 
         <view class="pcard__hint" wx:if="{{!item.oauth_ready && item.oauth_missing.length}}">
-          尚缺：{{item.oauth_missing}}
+          该平台的授权凭证尚未配置完成，暂时只能以演示身份绑定
         </view>
 
         <view

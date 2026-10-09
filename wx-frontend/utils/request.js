@@ -20,7 +20,7 @@ class ApiError extends Error {
 
 let baseUrl = config.baseUrl;
 
-/** 运行期切换后端地址（设置页「接口地址」用） */
+/** 运行期切换后端地址（仅开发版登录页的「接口地址」入口会调用） */
 function setBaseUrl(url) {
   if (url) baseUrl = url.replace(/\/+$/, "");
 }

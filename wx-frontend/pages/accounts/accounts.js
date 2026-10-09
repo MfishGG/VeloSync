@@ -59,12 +59,20 @@ Page({
                   : p.mobile_bind_channel === "app"
                     ? "可唤起官方 App"
                     : "仅演示绑定",
-            channelTint:
+            /**
+             * 面向用户的「绑定方式」：说清点下去会发生什么。
+             * 刻意不提「微信不允许唤起第三方 App / 三级兜底」——那是给后台配置者
+             * 看的口径（见 admin.py 与 README），终端用户不需要知道这个约束，
+             * 只需要知道下一步该做什么。
+             */
+            bindHint:
               p.auth_type === "mock"
-                ? "chip--primary"
-                : p.mobile_bind_channel === "demo"
-                  ? "chip--warning"
-                  : "chip--success",
+                ? "演示平台，点击后直接绑定，无需授权"
+                : p.mobile_bind_channel === "miniprogram"
+                  ? `点击「绑定账号」将跳转到 ${p.name} 官方小程序完成授权`
+                  : p.mobile_bind_channel === "app"
+                    ? `点击「绑定账号」将复制链接，需在浏览器中唤起 ${p.name} App 完成授权`
+                    : `${p.name} 暂未提供官方授权入口，将以演示身份绑定`,
             upload: !!(p.capabilities && p.capabilities.upload),
             boundCount: bound[p.id] || 0,
           })),
