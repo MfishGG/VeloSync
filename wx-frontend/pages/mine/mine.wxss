@@ -71,6 +71,38 @@
   transform: rotate(90deg);
 }
 
+/* ---------------- 隐私授权提示 ---------------- */
+/* 外观复用全局 .alert--warning，这里只补内部排布与按钮样式 */
+.privacy {
+  margin-top: 20rpx;
+}
+.privacy__ops {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 22rpx;
+  margin-top: 16rpx;
+}
+.privacy__link {
+  font-size: 24rpx;
+  color: #b45309;
+  text-decoration: underline;
+}
+/* button 重置：微信默认按钮自带边框与最小宽度，会撑坏这一行 */
+.privacy__agree {
+  margin: 0;
+  padding: 0 28rpx;
+  min-width: 0;
+  line-height: 1.9;
+  font-size: 24rpx;
+  color: #fff;
+  background: var(--warning);
+  border-radius: 999rpx;
+}
+.privacy__agree::after {
+  border: none;
+}
+
 /* ---------------- 个人资料（头像 / 昵称 / 手机号） ---------------- */
 .profile {
   background: #fff;

@@ -2,6 +2,7 @@ const api = require("../../api/index");
 const auth = require("../../utils/auth");
 const format = require("../../utils/format");
 const avatar = require("../../utils/avatar");
+const privacy = require("../../utils/privacy");
 
 /** 把后端的 social 绑定列表压成页面需要的形状 */
 function pickWechat(user) {
@@ -62,6 +63,9 @@ Page({
     savingAvatar: false,
     bindingPhone: false,
     avatarHint: AVATAR_HINT,
+    /** 隐私授权：未同意时手机号 / 头像 / 昵称组件会被微信拦截（errno 104） */
+    privacyNeeded: false,
+    privacyContractName: "",
     accountCount: 0,
     platformCount: 0,
     version: "1.0.0",
@@ -75,6 +79,7 @@ Page({
     this.applyUser(auth.getUser());
     this.refreshMe();
     this.loadBadges();
+    this.checkPrivacy();
   },
 
   /** 先用本地缓存的 user 立即渲染，避免头像闪一下空白 */
@@ -137,6 +142,26 @@ Page({
   /** 昵称输入。只在本地暂存，失焦或点击保存时才提交 */
   onNicknameInput(e) {
     this.setData({ nicknameDraft: e.detail.value || "" });
+  },
+
+  /**
+   * 昵称框聚焦时必须补一次隐私授权检查。
+   * 原因：`<input type="nickname">` 在未同意隐私政策时**不触发**授权事件，
+   * 而是静默降级成普通输入框 —— 用户能打字却拿不到微信昵称，且没有任何报错。
+   * 只有在此刻主动拉起授权，这个能力才会恢复。
+   */
+  onNicknameFocus() {
+    if (!this.data.privacyNeeded) return;
+    privacy
+      .authorize()
+      .then(() => {
+        // 降级判定发生在聚焦那一刻，本次聚焦已失效，需重新点击才能用上微信昵称
+        this.setData({ privacyNeeded: false });
+        wx.showToast({ title: "已同意隐私协议，请再次点击昵称框", icon: "none" });
+      })
+      .catch(() => {
+        /* 用户选择拒绝：保留提示条，昵称仍可手动输入 */
+      });
   },
 
   /** 昵称输入框失焦（键盘收起 / 点击别处）→ 有变化就提交 */
@@ -208,6 +233,32 @@ Page({
         wx.showToast({ title: (err && err.message) || "绑定失败", icon: "none" });
       })
       .then(() => this.setData({ bindingPhone: false }));
+  },
+
+  // ---------------- 隐私授权（微信《用户隐私保护指引》）----------------
+
+  /** 查询是否还有待用户同意的隐私政策；未同意时在资料卡上方给出提示条 */
+  checkPrivacy() {
+    privacy.check().then(({ needAuthorization, contractName }) => {
+      if (needAuthorization === this.data.privacyNeeded) return;
+      this.setData({
+        privacyNeeded: needAuthorization,
+        privacyContractName: contractName || "《用户隐私保护指引》",
+      });
+    });
+  },
+
+  /** 用户轻触「同意」：微信已同步同意状态，此后声明的隐私接口与组件均可用 */
+  onAgreePrivacy() {
+    this.setData({ privacyNeeded: false });
+    wx.showToast({ title: "已同意隐私协议", icon: "none" });
+  },
+
+  /** 查看管理后台配置的隐私协议全文 */
+  onOpenPrivacyContract() {
+    privacy.openContract().catch(() => {
+      wx.showToast({ title: "打开隐私协议失败，请稍后重试", icon: "none" });
+    });
   },
 
   /** 展开 / 收起账号信息（OpenID、UnionID） */
