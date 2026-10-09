@@ -132,7 +132,7 @@ export default function SettingsPage() {
           >
             <span className="text-indigo-600">Django Admin 后台</span>
             <span className="mt-0.5 block text-xs text-slate-400">
-              /admin/ · 账号 admin / admin123456 · 也可直接访问 http://127.0.0.1:8000/admin/
+              /admin/ · 需要超级管理员账号，凭据由部署方提供（不在界面上明文展示）
             </span>
           </a>
         </div>
