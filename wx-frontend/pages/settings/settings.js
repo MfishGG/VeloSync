@@ -6,6 +6,23 @@ const config = require("../../config");
 const BASE_URL_KEY = "velosync_base_url";
 const BASE_URL_STAMP = "velosync_base_url_stamp";
 
+/**
+ * 当前是否为「非正式版」（develop / trial）。
+ *
+ * 正式版必须隐藏「接口地址」与「开发者资源」两块 —— 它们只是联调期的便利设计，
+ * 但在发布版里，前者是一条 Token 外泄通道（诱导用户改地址即可把
+ * `Authorization: Bearer <JWT>` 发到攻击者服务器），后者把 Django Admin /
+ * OpenAPI 的路径直接摆在终端用户面前。
+ */
+function isDevVersion() {
+  try {
+    const info = wx.getAccountInfoSync ? wx.getAccountInfoSync().miniProgram || {} : {};
+    return (info.envVersion || "develop") !== "release";
+  } catch (e) {
+    return false; // 拿不到就按正式版处理
+  }
+}
+
 Page({
   data: {
     baseUrl: "",
@@ -15,39 +32,51 @@ Page({
     testResult: "",
     testOk: false,
     user: null,
-    adminUrl: "http://127.0.0.1:8000/admin/",
-    docsUrl: "http://127.0.0.1:8000/api/docs/",
+    adminUrl: "",
+    docsUrl: "",
     version: "1.0.0",
     envInfo: "",
     /** 当前环境（local / device / cloud），便于排查「为什么连的是这个地址」 */
     envName: "",
+    /** 是否非正式版：控制接口地址编辑与开发者资源是否渲染 */
+    isDev: true,
   },
 
   onLoad() {
+    const isDev = isDevVersion();
     // 与 app.js 一致：版本戳不匹配说明配置已更新，忽略过期缓存
     const saved = wx.getStorageSync(BASE_URL_KEY);
     const savedStamp = wx.getStorageSync(BASE_URL_STAMP);
-    const stored = saved && savedStamp === config.configStamp ? saved : config.baseUrl;
-    const env = wx.getAccountInfoSync
-      ? (wx.getAccountInfoSync().miniProgram || {}).envVersion || "develop"
-      : "develop";
+    // 正式版：清掉可能残留的自定义地址，强制回到 config.baseUrl
+    if (!isDev && saved) {
+      wx.removeStorageSync(BASE_URL_KEY);
+      wx.removeStorageSync(BASE_URL_STAMP);
+      request.setBaseUrl(config.baseUrl);
+    }
+    const stored =
+      isDev && saved && savedStamp === config.configStamp ? saved : config.baseUrl;
+    const info = wx.getAccountInfoSync ? wx.getAccountInfoSync().miniProgram || {} : {};
+    const envVersion = info.envVersion || "develop";
     const sys = wx.getSystemInfoSync();
     this.setData({
+      isDev,
       baseUrl: stored,
       draftUrl: stored,
       user: auth.getUser(),
       envName: config.env,
-      envInfo: `${sys.platform} · ${sys.model} · 基础库 ${sys.SDKVersion || "-"} · ${env}`,
+      envInfo: `${sys.platform} · ${sys.model} · 基础库 ${sys.SDKVersion || "-"} · ${envVersion}`,
     });
     this.updateDevUrls(stored);
   },
 
   updateDevUrls(baseUrl) {
+    if (!this.data.isDev) return; // 正式版不展示后台地址
     const root = String(baseUrl).replace(/\/api\/?$/, "");
     this.setData({ adminUrl: `${root}/admin/`, docsUrl: `${root}/api/docs/` });
   },
 
   onEdit() {
+    if (!this.data.isDev) return;
     this.setData({ editing: true, draftUrl: this.data.baseUrl, testResult: "" });
   },
 
@@ -64,6 +93,7 @@ Page({
   },
 
   onSaveUrl() {
+    if (!this.data.isDev) return; // 双保险
     const url = String(this.data.draftUrl || "").trim();
     if (!/^https?:\/\/.+/i.test(url)) {
       wx.showToast({ title: "请填写完整地址，如 http://127.0.0.1:8000/api", icon: "none" });
@@ -130,7 +160,6 @@ Page({
       confirmColor: "#ef4444",
       success: (r) => {
         if (!r.confirm) return;
-        const keep = {};
         wx.clearStorageSync();
         auth.clear();
         const app = getApp();
@@ -144,8 +173,9 @@ Page({
       title: "关于 VeloSync 速同",
       content:
         "跨平台运动数据同步中枢\n" +
-        "把 iGPSPORT、Garmin、Strava、COROS 等平台的运动记录汇总、去重、分发，\n" +
-        "让每一条记录在所有平台都有一席之地。\n\n" +
+        "把 iGPSPORT、Garmin、Strava、COROS 等平台的运动记录汇总、去重、分发。\n\n" +
+        "当前已打通「演示平台」的完整链路（拉取 → 去重 → 分发 → 日志）；\n" +
+        "四个真实平台的适配器仍在接入中，绑定后暂无法真实拉取/上传数据。\n\n" +
         "小程序端 v" +
         this.data.version,
       showCancel: false,

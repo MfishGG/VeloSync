@@ -5,8 +5,9 @@
     <view class="hero__sub">速同 · 跨平台运动数据同步中枢</view>
   </view>
 
-  <!-- 后端接口地址：真机预览时在登录前就能改，避免进不去设置页 -->
-  <view class="card stack" wx:if="{{editingBase}}">
+  <!-- 后端接口地址：真机预览时在登录前就能改，避免进不去设置页。
+       仅非正式版渲染 —— 正式版里这个入口是一条 Token 外泄通道。 -->
+  <view class="card stack" wx:if="{{isDev && editingBase}}">
     <view class="card__title">后端接口地址</view>
     <view class="field">
       <input
@@ -44,12 +45,14 @@
     </button>
 
     <view class="wx-note">
-      仅支持微信登录：VeloSync 需要你的微信身份来建立账号，昵称与头像直接来自微信授权。
+      仅支持微信登录：VeloSync 用你的微信身份建立账号。昵称与头像需要在「我的 → 个人资料」里自行设置 ——
+      微信自 2022 年起已不再支持一键获取真实头像昵称。
     </view>
 
     <view class="alert alert--warning" wx:if="{{providersFailed}}">
       未连接到后端（{{baseUrlHost}}），暂时无法判断登录模式。
-      <text class="t-primary" bindtap="editBase">修改接口地址</text>
+      <text class="t-primary" wx:if="{{isDev}}" bindtap="editBase">修改接口地址</text>
+      <text wx:else>请检查网络后重试。</text>
     </view>
     <view class="alert alert--success" wx:elif="{{wxMode === 'oauth'}}">
       已接入微信真实登录：点击上方按钮将唤起微信授权，昵称与头像来自你的微信账号。
@@ -60,7 +63,7 @@
     </view>
   </view>
 
-  <view class="login__base" bindtap="editBase">
+  <view class="login__base" wx:if="{{isDev}}" bindtap="editBase">
     接口地址：{{baseUrlHost}} · <text class="t-primary">修改</text>
   </view>
 

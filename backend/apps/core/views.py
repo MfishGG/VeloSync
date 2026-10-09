@@ -1,6 +1,7 @@
 """健康检查：供容器编排（微信云托管 / K8s）探测实例就绪状态。"""
 import os
 
+from django.conf import settings
 from django.db import connection
 from django.http import JsonResponse
 
@@ -11,8 +12,17 @@ def health(request):
     返回 200 表示进程存活且数据库可连通；数据库异常时返回 503，
     让编排系统据此把该实例摘除，避免流量打到不可用实例上。
 
-    注意：这个接口本身**不依赖数据库**（Django 未执行任何查询也能响应），
-    所以即使配置写错，它也能返回可读的诊断信息 —— 这正是排查部署问题的入口。
+    **默认只回 status / database 两个字段。**
+
+    早期版本会把内网 IP、数据库名、数据库账号、引擎与精确版本一并吐出来，
+    而这个接口是**匿名**的（容器 HEALTHCHECK 在容器内跑，外部根本不需要），
+    等于给攻击者送侦察情报。现在详细诊断信息只在以下两种情况下返回：
+
+    - `settings.DEBUG` 为真（本地开发）；
+    - 请求带 `X-Health-Token` 且与 `HEALTH_DETAIL_TOKEN` 一致（线上排障用）。
+
+    出故障时（503）仍然附带 `detail` + `hint`，因为那时候最需要可读的线索，
+    且此时实例本就不可用、不构成额外泄漏。
     """
     db_ok = True
     db_error = ""
@@ -26,27 +36,48 @@ def health(request):
         db_ok = False
         db_error = str(exc)[:300]
 
-    payload = {
+    payload: dict = {
         "status": "ok" if db_ok else "degraded",
         "database": "ok" if db_ok else "error",
-        # 回显非敏感配置，便于在云托管控制台直接确认「容器到底读到了什么」
-        "config": {
-            "engine": os.getenv("DB_ENGINE", "sqlite"),
-            "host": os.getenv("DB_HOST", ""),
-            "port": os.getenv("DB_PORT", ""),
-            "name": os.getenv("DB_NAME", ""),
-            "user": os.getenv("DB_USER", ""),
-            "password_set": bool(os.getenv("DB_PASSWORD")),
-            "debug": os.getenv("DJANGO_DEBUG", ""),
-        },
     }
-    if db_version:
-        payload["config"]["server_version"] = db_version
+
     if db_error:
+        # 故障时给出可读线索；这里不含凭据，只有错误文本与版本。
         payload["detail"] = db_error
         payload["hint"] = _hint(db_error, db_version)
 
+    if _detail_allowed(request):
+        payload["config"] = _config_snapshot(db_version)
+        if db_error:
+            payload["config"]["server_version"] = db_version
+
     return JsonResponse(payload, status=200 if db_ok else 503)
+
+
+def _detail_allowed(request) -> bool:
+    """是否允许返回详细诊断信息。"""
+    if settings.DEBUG:
+        return True
+    expected = getattr(settings, "HEALTH_DETAIL_TOKEN", "")
+    if not expected:
+        return False
+    return request.headers.get("X-Health-Token", "") == expected
+
+
+def _config_snapshot(db_version: str = "") -> dict:
+    """容器实际读到的非凭据配置，便于在控制台确认「环境变量到底生效没有」。"""
+    snapshot = {
+        "engine": os.getenv("DB_ENGINE", "sqlite"),
+        "host": os.getenv("DB_HOST", ""),
+        "port": os.getenv("DB_PORT", ""),
+        "name": os.getenv("DB_NAME", ""),
+        "user": os.getenv("DB_USER", ""),
+        "password_set": bool(os.getenv("DB_PASSWORD")),
+        "debug": os.getenv("DJANGO_DEBUG", ""),
+    }
+    if db_version:
+        snapshot["server_version"] = db_version
+    return snapshot
 
 
 def _hint(error: str, server_version: str = "") -> str:

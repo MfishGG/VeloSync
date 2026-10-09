@@ -16,9 +16,13 @@ set -u
 PORT="${PORT:-80}"
 WORKERS="${WEB_CONCURRENCY:-2}"
 THREADS="${WEB_THREADS:-4}"
+# 同一个镜像承担三种角色：web（默认）/ worker / beat。
+# 云托管上分别建三个服务、同一个镜像，靠环境变量区分即可 ——
+# 这样不必为异步执行再维护第二套构建。
+RUN_MODE="${RUN_MODE:-web}"
 
 echo "=============================================="
-echo "[entrypoint] 启动 VeloSync 后端"
+echo "[entrypoint] 启动 VeloSync 后端（RUN_MODE=${RUN_MODE}）"
 echo "[entrypoint] 时间     : $(date '+%Y-%m-%d %H:%M:%S %Z')"
 echo "[entrypoint] Python   : $(python --version 2>&1)"
 echo "[entrypoint] 监听端口 : ${PORT}"
@@ -30,6 +34,10 @@ echo "[entrypoint] DB_USER  : ${DB_USER:-<未设置>}"
 echo "[entrypoint] DB_PASSWORD: $([ -n "${DB_PASSWORD:-}" ] && echo '<已设置>' || echo '<未设置>')"
 echo "[entrypoint] DJANGO_DEBUG: ${DJANGO_DEBUG:-<未设置，默认 1>}"
 echo "[entrypoint] ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-<未设置>}"
+echo "[entrypoint] TOKEN_ENCRYPTION_KEY: $([ -n "${TOKEN_ENCRYPTION_KEY:-}" ] && echo '<已设置>' || echo '<未设置>')"
+echo "[entrypoint] HEALTH_DETAIL_TOKEN: $([ -n "${HEALTH_DETAIL_TOKEN:-}" ] && echo '<已设置>' || echo '<未设置>')"
+echo "[entrypoint] CACHE_URL: $([ -n "${CACHE_URL:-}" ] && echo '<已设置>' || echo '<未设置，用进程内缓存>')"
+echo "[entrypoint] CELERY_BROKER_URL: ${CELERY_BROKER_URL:-<未设置，默认 redis://127.0.0.1:6379/0>}"
 echo "=============================================="
 
 # ---------- 0. 环境自检：把常见配置错误提前说清楚 ----------
@@ -42,6 +50,27 @@ if [ -n "${MYSQL_ADDRESS:-}" ] && [ -z "${DB_HOST:-}" ]; then
   echo "[entrypoint][错误] 检测到云托管的 MYSQL_ADDRESS='${MYSQL_ADDRESS}'，但 DB_HOST 未设置！"
   echo "[entrypoint][错误] 本项目读的是 DB_HOST / DB_PORT，与 MYSQL_ADDRESS 不是同一个变量。"
   echo "[entrypoint][错误] 且 MYSQL_ADDRESS 是「IP:端口」合体，必须拆成 DB_HOST=<IP> 和 DB_PORT=<端口>。"
+fi
+
+# 最小权限：应用不该用 root 连库。ORM 让注入概率很低，但凭据一旦泄漏
+# （例如密钥沿用默认值），root 意味着整实例沦陷而不是单库受限。
+if [ "${DB_USER:-}" = "root" ]; then
+  echo "[entrypoint][警告] DB_USER=root，应用正在以 MySQL 最高权限连接。"
+  echo "[entrypoint][警告] 建议另建账号（如 velosync），只授予本库的 CRUD/DDL 权限。"
+fi
+
+# 加密密钥如果沿用默认值，Fernet 密钥可由仓库里公开的 SECRET_KEY 派生出来，
+# 数据库里的平台 Token 等于明文。这里只提示，不在日志里打印密钥本身。
+if [ -z "${TOKEN_ENCRYPTION_KEY:-}" ]; then
+  echo "[entrypoint][警告] TOKEN_ENCRYPTION_KEY 未设置，平台 Token 将用由 SECRET_KEY 派生的密钥加密。"
+  echo "[entrypoint][警告] 若 DJANGO_SECRET_KEY 也是默认值，则任何人都能复算出该密钥。"
+  echo "[entrypoint][警告] 请执行 python manage.py deploy_check 自查。"
+fi
+
+# ---------- 0.4 beat 模式：只做定时调度，不迁移、不收集静态 ----------
+if [ "${RUN_MODE}" = "beat" ]; then
+  echo "[entrypoint] >>> 以 beat 模式启动（只负责定时投递，不处理请求）"
+  exec celery -A config beat --loglevel=info
 fi
 
 # ---------- 0.5 数据库版本预检 ----------
@@ -124,7 +153,14 @@ if [ -d /app/staticfiles ] || [ "${MIGRATE_OK}" = "1" ]; then
     || echo "[entrypoint][警告] collectstatic 失败（不影响 API，仅 Admin 样式可能缺失）"
 fi
 
-# ---------- 3. 启动 gunicorn（无论如何都要起来） ----------
+# ---------- 3. 启动进程：web（gunicorn）或 worker（celery） ----------
+if [ "${RUN_MODE}" = "worker" ]; then
+  echo "[entrypoint] >>> 以 worker 模式启动 celery（并发 ${CELERY_CONCURRENCY:-2}）"
+  exec celery -A config worker \
+    --loglevel=info \
+    --concurrency="${CELERY_CONCURRENCY:-2}"
+fi
+
 echo "[entrypoint] >>> 启动 gunicorn，绑定 0.0.0.0:${PORT} ..."
 if [ "${MIGRATE_OK}" = "0" ]; then
   echo "[entrypoint][提醒] 数据库不可用，接口会返回 503；修好环境变量后重新部署即可。"
@@ -138,4 +174,5 @@ exec gunicorn config.wsgi:application \
   --graceful-timeout 30 \
   --access-logfile - \
   --error-logfile - \
-  --log-level info
+  --log-level info \
+  --access-logformat '%(h)s %(l)s %(u)s %(t)s "%(m)s %(U)s %(H)s" %(s)s %(b)s "%(f)s" "%(a)s" %(D)sus'

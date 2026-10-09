@@ -7,6 +7,23 @@ const config = require("../../config");
 const DEVICE_KEY = "velosync_device_id";
 const BASE_URL_KEY = "velosync_base_url";
 
+/**
+ * 当前是否为「非正式版」。
+ *
+ * 发布版里必须隐藏「接口地址」编辑入口 —— 它本来只是开发期方便联调的设计，
+ * 但在正式版里等于一条 Token 外泄通道：任何诱导（截图教程、群消息
+ * 「改下地址就能用」）都能让用户在不知情下把 `Authorization: Bearer <JWT>`
+ * 发到攻击者服务器。而终端用户看到「接口地址」这种词也只会困惑。
+ */
+function isDevVersion() {
+  try {
+    const info = wx.getAccountInfoSync ? wx.getAccountInfoSync().miniProgram || {} : {};
+    return (info.envVersion || "develop") !== "release";
+  } catch (e) {
+    return false; // 拿不到就按正式版处理（宁可少一个开发入口，也不外泄凭据）
+  }
+}
+
 /** 从完整 URL 中取出主机部分，供界面提示用 */
 function hostOf(url) {
   const m = String(url || "").match(/^https?:\/\/([^/]+)/i);
@@ -42,11 +59,25 @@ Page({
     baseTestOk: false,
     baseTestErr: "",
     baseMode: "mock",
+    /** 是否非正式版。只有非正式版才渲染接口地址编辑入口 */
+    isDev: true,
   },
 
   onLoad() {
+    const isDev = isDevVersion();
     const stored = wx.getStorageSync(BASE_URL_KEY) || request.getBaseUrl() || config.baseUrl;
-    this.setData({ baseUrl: stored, draftUrl: stored, baseUrlHost: hostOf(stored) });
+    // 正式版：清掉可能残留的自定义地址，强制回到 config.baseUrl
+    if (!isDev && wx.getStorageSync(BASE_URL_KEY)) {
+      wx.removeStorageSync(BASE_URL_KEY);
+      request.setBaseUrl(config.baseUrl);
+    }
+    const effective = isDev ? stored : config.baseUrl;
+    this.setData({
+      isDev,
+      baseUrl: effective,
+      draftUrl: effective,
+      baseUrlHost: hostOf(effective),
+    });
     this.loadWxMode();
   },
 
@@ -71,8 +102,9 @@ Page({
       });
   },
 
-  // ---------------- 后端接口地址（真机调试必备） ----------------
+  // ---------------- 后端接口地址（仅非正式版可用） ----------------
   editBase() {
+    if (!this.data.isDev) return; // 正式版不提供编辑入口
     this.setData({
       editingBase: true,
       draftUrl: this.data.baseUrl,
@@ -123,6 +155,7 @@ Page({
   },
 
   saveBaseUrl() {
+    if (!this.data.isDev) return; // 双保险：即使被绕过 UI 也不允许改写
     const url = this.normalizeDraft();
     if (!url) return;
     wx.setStorageSync(BASE_URL_KEY, url);

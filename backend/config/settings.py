@@ -133,8 +133,11 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # ---------- DRF ----------
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        # 支持 ?access_token= 的 JWT 认证，专供 EventSource(SSE) 使用
-        "apps.accounts.auth.QueryParamJWTAuthentication",
+        # 注意：**不**在这里注册 QueryParamJWTAuthentication。
+        # 它会把「URL 里的 access_token」当成对所有接口都有效的凭据，
+        # 而 URL 会进 gunicorn 访问日志 —— 等于把 JWT 写进日志系统。
+        # 现在只由需要它的视图（PipelineViewSet.get_authenticators）按需挂载，
+        # 且仅在 DEBUG 下生效（见 apps/accounts/auth.py）。
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
@@ -143,6 +146,21 @@ REST_FRAMEWORK = {
         "rest_framework.filters.OrderingFilter",
     ],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    # 限流：ScopedRateThrottle 只对显式声明了 throttle_scope 的视图生效，
+    # 因此挂成默认值不会误伤其它接口。
+    "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.ScopedRateThrottle"],
+    "DEFAULT_THROTTLE_RATES": {
+        # 账密登录与注册是撞库/批量注册的主要入口
+        "login": os.getenv("THROTTLE_LOGIN", "10/min"),
+        "register": os.getenv("THROTTLE_REGISTER", "5/hour"),
+        # 每次调用都要去微信换手机号，会消耗接口额度
+        "phone": os.getenv("THROTTLE_PHONE", "10/hour"),
+        "profile": os.getenv("THROTTLE_PROFILE", "30/hour"),
+        # 试运行预览/运行任务：都要查库拉数据，给个宽松但有上限的额度
+        "write": os.getenv("THROTTLE_WRITE", "120/hour"),
+        "anon": os.getenv("THROTTLE_ANON", "60/min"),
+        "user": os.getenv("THROTTLE_USER", "600/min"),
+    },
 }
 
 SIMPLE_JWT = {
@@ -170,16 +188,48 @@ CSRF_TRUSTED_ORIGINS = [
     if o.strip()
 ]
 
+# ---------- 缓存 ----------
+# 限流、微信 access_token、OAuth state 一次性校验都依赖缓存。
+# 默认 LocMemCache 是**进程内**缓存：多 worker 时各进程各算一份，
+# 限流额度会被放大成 N 倍、access_token 会重复获取。规模上来后请设
+# CACHE_URL（需 redis 包）换成共享缓存。
+CACHE_URL = os.getenv("CACHE_URL", "")
+if CACHE_URL:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": CACHE_URL,
+        }
+    }
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "velosync-locmem",
+        }
+    }
+
 # ---------- Celery ----------
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
-# 开发默认 EAGER（同步执行，无需 Redis）；生产设为 0 并启动 celery worker / beat
-CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "1") == "1"
+# 默认 **0**：不要把同步任务放在 HTTP 请求里同步执行。
+# gunicorn 的 --timeout 120 到点会直接杀掉 worker，响应永不返回，
+# PipelineRun 永久停在 running。生产请起 celery worker（+ beat 跑定时轮询）；
+# 没起 worker 时 dispatch_run 会自动回退到后台线程，至少不会阻塞请求。
+CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "0") == "1"
+# 单次同步的硬上限：即便平台侧卡住，也不至于让一个 run 永远挂着
+CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "1800"))
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "1500"))
 CELERY_BEAT_SCHEDULE = {
-    # 每 5 分钟轮询开启 auto_run 的管道
+    # 每 5 分钟轮询开启 auto_run 的管道（需要运行 celery beat 才生效）
     "poll-source-platforms": {
         "task": "apps.pipelines.tasks.scheduled_auto_run",
         "schedule": 300.0,
+    },
+    # 每 10 分钟回收卡在 running 的僵尸运行记录
+    "reap-stale-runs": {
+        "task": "apps.pipelines.tasks.reap_stale_runs",
+        "schedule": 600.0,
     },
 }
 
@@ -187,6 +237,23 @@ CELERY_BEAT_SCHEDULE = {
 # 平台 Token 加密密钥（Fernet）。留空则从 SECRET_KEY 派生（仅开发用）。
 TOKEN_ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+# 平台 OAuth 回调的固定基址。各平台要求 redirect_uri 与后台登记值**逐字匹配**，
+# 显式配置比每次靠请求头推导可靠。留空则用 request.build_absolute_uri()。
+PLATFORM_REDIRECT_BASE_URL = os.getenv("PLATFORM_REDIRECT_BASE_URL", "")
+
+# 云托管在负载均衡层终止 TLS，转发到容器是明文 HTTP。
+# 不声明这两项的话 request.scheme 恒为 http，
+# request.build_absolute_uri() 会生成 http:// 的 redirect_uri ——
+# 各平台都要求 HTTPS 且逐字匹配，真实 OAuth 必然失败。
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = True
+
+# /api/health/ 的详细诊断信息（内网 IP、库名、账号、版本）默认不外泄，
+# 只有带这个 token 的请求或 DEBUG 模式才返回。留空 = 仅 DEBUG 可见。
+HEALTH_DETAIL_TOKEN = os.getenv("HEALTH_DETAIL_TOKEN", "")
+
+# 单个运行的存活上限（分钟）。超过则被 reap_stale_runs 判定为僵尸并置为 error。
+PIPELINE_RUN_TIMEOUT_MINUTES = int(os.getenv("PIPELINE_RUN_TIMEOUT_MINUTES", "30"))
 
 # ---------- 第三方快捷登录（微信 / QQ / 微博）----------
 # 填入 app_id / app_secret 即走真实 OAuth2；留空时为演示（mock）模式，仍可一键登录注册体验流程。
@@ -226,4 +293,12 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "跨平台运动数据同步中枢 —— 活动汇总 / 去重 / 分发",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    # drf-spectacular 的 Schema/Swagger 视图默认是 AllowAny（显式覆盖，绕过全局
+    # IsAuthenticated），本机实测 /api/schema/ 匿名可拿到全部 34 个接口的清单。
+    # 这本身不是漏洞，但等于把完整攻击面地图公开，配合其它信息就是有效的侦察跳板。
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.IsAdminUser"],
+    "SERVE_AUTHENTICATION": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
+    ],
 }

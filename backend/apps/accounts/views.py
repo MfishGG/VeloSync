@@ -11,12 +11,18 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.views import TokenRefreshView  # noqa: F401 （路由复用）
+from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import social
 from .models import UserProfile
 from .serializers import RegisterSerializer, UserSerializer
 from .social import PROVIDER_META, SocialError
+
+
+class ThrottledTokenRefreshView(TokenRefreshView):
+    """refresh 换 access。也要限流 —— 否则可以拿一个 refresh token 无限刷 access。"""
+
+    throttle_scope = "login"
 
 
 def _token_pair(user) -> dict:
@@ -34,6 +40,8 @@ class LoginView(APIView):
     """POST /api/auth/login/ —— JWT 登录"""
 
     permission_classes = [AllowAny]
+    # 无锁定、无验证码，不限流就是可无限撞库的敞口
+    throttle_scope = "login"
 
     def post(self, request):
         username = request.data.get("username", "")
@@ -48,6 +56,7 @@ class RegisterView(APIView):
     """POST /api/auth/register/ —— 注册"""
 
     permission_classes = [AllowAny]
+    throttle_scope = "register"
 
     def post(self, request):
         ser = RegisterSerializer(data=request.data)
@@ -83,6 +92,9 @@ class BindPhoneView(APIView):
     - 只接受微信 `getPhoneNumber` 的动态令牌换取的真实号码，不接受前端直接传号码
       （前端不是安全边界，直接传号码等于任何人都能伪造）。
     """
+
+    # 每次调用都要去微信换 access_token + 消费一次性 code，会消耗接口额度
+    throttle_scope = "phone"
 
     def post(self, request):
         code = (request.data.get("code") or "").strip()
@@ -143,6 +155,8 @@ class UpdateProfileView(APIView):
     昵称同时写入 `user.first_name` 与微信绑定的 `SocialAccount.nickname`，
     保证个人页、工作台、绑定列表三处显示一致。
     """
+
+    throttle_scope = "profile"
 
     def patch(self, request):
         updates = {}
@@ -250,6 +264,7 @@ class SocialLoginView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_scope = "login"
 
     def post(self, request):
         provider = (request.data.get("provider") or "").strip()
@@ -306,6 +321,7 @@ class WxMiniProgramLoginView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_scope = "login"
 
     def get(self, request):
         enabled = social.miniprogram_enabled()

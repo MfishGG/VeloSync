@@ -1,5 +1,4 @@
 from django.urls import path
-from rest_framework_simplejwt.views import TokenRefreshView
 
 from .views import (
     BindPhoneView,
@@ -10,13 +9,14 @@ from .views import (
     SocialCallbackView,
     SocialLoginView,
     SocialProvidersView,
+    ThrottledTokenRefreshView,
     UpdateProfileView,
     WxMiniProgramLoginView,
 )
 
 urlpatterns = [
     path("login/", LoginView.as_view(), name="auth-login"),
-    path("refresh/", TokenRefreshView.as_view(), name="auth-refresh"),
+    path("refresh/", ThrottledTokenRefreshView.as_view(), name="auth-refresh"),
     path("register/", RegisterView.as_view(), name="auth-register"),
     path("me/", MeView.as_view(), name="auth-me"),
     # 手机号绑定（仅作展示 / 联系方式，不承担登录身份）
