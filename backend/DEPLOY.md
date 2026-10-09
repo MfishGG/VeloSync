@@ -103,17 +103,23 @@ CREATE DATABASE IF NOT EXISTS velosync
 {
   "DJANGO_SECRET_KEY": "<随机长字符串，务必换掉>",
   "DJANGO_DEBUG": "0",
-  "DJANGO_ALLOWED_HOSTS": "*",
+  "DJANGO_ALLOWED_HOSTS": "django-xu8d-324494-11-1501612653.sh.run.tcloudbase.com",
   "DB_ENGINE": "mysql",
   "DB_NAME": "velosync",
-  "DB_USER": "root",
+  "DB_USER": "velosync",
   "DB_PASSWORD": "<云托管 MySQL 密码>",
   "DB_HOST": "<云托管 MySQL 内网地址，不含端口>",
   "DB_PORT": "3306",
-  "CELERY_TASK_ALWAYS_EAGER": "1",
+  "TOKEN_ENCRYPTION_KEY": "<Fernet key>",
+  "HEALTH_DETAIL_TOKEN": "<随机串，用于临时查看健康检查详情>",
+  "FRONTEND_URL": "https://<前端域名>",
+  "PLATFORM_REDIRECT_BASE_URL": "https://django-xu8d-324494-11-1501612653.sh.run.tcloudbase.com",
   "WECHAT_MP_APP_ID": "wxd12e39be6f29d81e",
   "WECHAT_MP_APP_SECRET": "<你的小程序 AppSecret>",
-  "TOKEN_ENCRYPTION_KEY": "<Fernet key>"
+  "CELERY_TASK_ALWAYS_EAGER": "0",
+  "CELERY_BROKER_URL": "redis://<云托管 Redis 内网地址>:6379/0",
+  "CACHE_URL": "redis://<云托管 Redis 内网地址>:6379/1",
+  "RUN_MODE": "web"
 }
 ```
 
@@ -125,11 +131,40 @@ CREATE DATABASE IF NOT EXISTS velosync
   ```bash
   python -c "from django.core.management.utils import get_random_secret_key as k; print(k())"
   ```
-- **`TOKEN_ENCRYPTION_KEY`**：用于加密存库的平台 Token。生成：
+- **`TOKEN_ENCRYPTION_KEY`**：用于加密存库的平台 Token **与 `client_secret`**。生成：
   ```bash
   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
   ```
   ⚠️ **这个 key 一旦丢失，已存库的平台 Token 将无法解密**。请单独备份。留空则由 `SECRET_KEY` 派生——但那样改了 `SECRET_KEY` 就会导致 Token 全部失效，所以生产建议显式设置。
+
+### 3.5 部署后立刻自查
+
+```bash
+python manage.py deploy_check
+```
+
+它会逐条核对**只在环境变量里出错、代码里看不出来**的项：密钥是否仍是仓库默认值、
+`DB_USER` 是不是 root、缓存是不是进程内、执行模型是否还开着 EAGER。
+有 `✗` 项时退出码为 1，可以直接接进流水线。
+
+### 3.6 起 worker 与 beat（异步执行必需）
+
+`RUN_MODE` 让**同一个镜像**承担三种角色，在云托管上建三个服务即可（共用镜像、环境变量不同）：
+
+| 服务 | 环境变量 | 作用 |
+|---|---|---|
+| Web（已有） | `RUN_MODE=web` | 处理 HTTP，**不**执行同步任务 |
+| Worker | `RUN_MODE=worker`（可加 `CELERY_CONCURRENCY=2`） | 真正跑同步任务 |
+| Beat | `RUN_MODE=beat` | 每 5 分钟投递 `auto_run` 任务、每 10 分钟回收僵尸运行 |
+
+> **不建 worker 也能跑**：`dispatch_run()` 在 Celery 不可用时会回退到后台线程，
+> 请求不会被阻塞。但线程会随容器回收中断，所以生产建议起 worker + Redis。
+>
+> **不起 beat 的后果**：`auto_run`（定时自动运行）永远不会触发 —— 这不是 bug，
+> 是必须有个进程去投递。
+>
+> ⚠️ 三个服务都要能连上同一个 Redis（`CELERY_BROKER_URL`），否则投递与消费对不上。
+
 
 ### 4. 部署
 
@@ -149,10 +184,20 @@ python manage.py createsuperuser
 
 ```bash
 curl https://<你的云托管域名>/api/health/
-# 期望：{"status": "ok", "database": "ok", "config": {...}}
+# 期望：{"status": "ok", "database": "ok"}
 ```
 
-若返回 `503` + `"database": "error"`，把返回体里的 `hint` 和 `config` 段贴出来即可定位 —— 见下方「常见问题」。
+> **注意**：健康检查默认**只回这两个字段**。此前它会把内网 IP、库名、DB 账号、引擎与精确版本
+> 一并吐出来，而这个接口是匿名的（容器 HEALTHCHECK 在容器内跑，外部并不需要）——
+> 等于给攻击者送侦察情报。现在要看详细诊断信息，用：
+>
+> ```bash
+> curl -H "X-Health-Token: <HEALTH_DETAIL_TOKEN>" https://<域名>/api/health/
+> ```
+>
+> 接口 `503` 时仍会附带 `detail` + `hint`，因为那时最需要可读线索。
+
+若返回 `503` + `"database": "error"`，把返回体里的 `hint` 贴出来即可定位 —— 见下方「常见问题」。
 
 ### 6.5 部署失败了怎么排查（重要）
 

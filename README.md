@@ -1,6 +1,11 @@
 # VeloSync（速同）· 跨平台运动数据同步中枢
 
-> 将 iGPSPORT、Garmin、Strava、Coros 等平台的运动记录自动汇总、去重、分发，让每一条骑行记录在所有平台都有一席之地。
+> 把 iGPSPORT、Garmin、Strava、Coros 等平台的运动记录汇总、去重、分发，让每一条骑行记录在所有平台都有一席之地。
+>
+> ⚠️ **当前进度**：已完成「演示平台（Mock）」的**端到端全链路**（拉取 → 去重 → 分发 → 日志 → 矩阵）。
+> iGPSPORT / Garmin / Strava / COROS **四个真实平台的适配器仍是骨架**——每个方法都会抛
+> `AdapterError("...待适配")`，申请到开发者凭证并实现接口后才能真实同步。功能表里的「骨架」二字是
+> 有意保留的，请不要按首段理解成「已经能同步这四个平台」。
 
 **技术栈**：React 18 + TypeScript + Vite + React Flow + TanStack Query + Zustand + Recharts + cmdk ｜ Django 5 + DRF + SimpleJWT + Celery + MySQL 8 / SQLite
 
@@ -10,22 +15,22 @@
 
 | 模块             | 说明                                                                                                                                                                                              |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 🔐 账号与授权       | JWT 登录/注册；平台 OAuth2 授权绑定（authorize/callback 全流程）、未配置凭证时可按「演示身份」绑定、凭证状态可视化、Token Fernet 加密存储、状态监控、解绑/重授权；**退出登录**（侧栏底部 / 设置页 / 命令面板三处入口，二次确认，并清空 token 与全部查询缓存以防换账号串数据）                          |
+| 🔐 账号与授权       | JWT 登录/注册；平台 OAuth2 授权绑定（authorize/callback 全流程）、未配置凭证时可按「演示身份」绑定、凭证状态可视化、Token 与 client_secret 均 Fernet 加密存储、**Token 到期自动刷新**（含 refresh token 轮换）、过期/撤销状态如实呈现、解绑时通知平台撤销授权；**退出登录**（侧栏底部 / 设置页 / 命令面板三处入口，二次确认，并清空 token 与全部查询缓存以防换账号串数据）                          |
 | 🆔 注册与快捷登录     | 账密注册（用户名/昵称/邮箱/密码确认 + 前后端校验）；微信 · QQ · 微博一键登录注册，同一身份自动复用账号                                                                                                                                      |
 | 📦 同步任务        | 四步向导：**数据来源**（FIT 文件 / iGPSPORT / 佳明 / Strava / COROS / 演示）→ **同步内容**（运动记录、汇总指标、采样点、GPS 轨迹、设备信息 / 个人资料、训练课程、路线、体重、睡眠、日常健康、装备、训练计划…）→ **目标账号**（多选）→ **时间范围与选项**。FIT 来源的时间范围受文件自身记录限制，支持**试运行预览** |
-| 🕸 执行图可视化      | 结构化配置自动展开为 React Flow 执行图（源 → 时间范围 → 目标账号），节点边框随 SSE 实时变色，运行统计（命中/同步/跳过/失败/纠偏点数）可视化                                                                                                             |
+| 🕸 执行图可视化      | 结构化配置自动展开为 React Flow 执行图（源 → 时间范围 → 目标账号），节点边框随运行进度实时变色，运行统计（命中/同步/跳过/失败/纠偏点数）可视化                                                                                                             |
 | 📊 活动矩阵        | 活动 × 平台二维矩阵，✅已同步 / ⚠️待同步 / ❌失败 / —不适用，点击看详情、右键手动同步                                                                                                                                              |
 | 📄 FIT 解析      | 上传 .fit 解析汇总指标；**15 类指标全部预留**（无数据留空白图位），曲线支持**时间 / 距离双维度**与**多指标叠加**；GPS 轨迹用**高德地图**回放；导入历史可查看/删除，按文件哈希去重入库                                                                                     |
 | 🧠 智能去重        | ±5 秒时间窗口匹配 + FIT 哈希辅助校验，防止重复上传                                                                                                                                                                  |
 | ⚙️ 规则引擎        | 时间范围过滤、仅含 GPS、轨迹点上限抽稀、坐标纠偏、智能去重、冲突策略（跳过/覆盖/副本）、试运行                                                                                                                                              |
-| ⚡ 实时进度         | SSE（EventSource）推送同步任务运行状态，节点边框实时变色（运行中闪烁/成功绿/失败红），并推送执行统计                                                                                                                                      |
+| ⚡ 实时进度         | 短轮询运行状态（1.5s）驱动节点边框实时变色（运行中闪烁/成功绿/失败红），并推送执行统计。**刻意不用 SSE**：长连接会独占请求槽位，而全站并发槽位只有 8 个，几个并发打开详情页的用户就能让整个 API（含健康检查）停止响应                                                                                 |
 | 📈 仪表盘         | 活动总数、已同步、待同步、同步率，平台分布饼图、30 天趋势折线、最近同步表格                                                                                                                                                         |
 | 📜 同步日志        | 表格 + 时间轴双视图，按级别/同步任务筛选                                                                                                                                                                          |
 | ⌨️ 命令面板        | Ctrl/Cmd + K：跳转页面、搜索同步任务与活动、刷新数据、退出登录                                                                                                                                                           |
 | 🖥 三栏工作台       | 左侧导航可折叠可拖拽调宽，右侧上下文面板随选中对象切换                                                                                                                                                                     |
 | 🧩 插件化 Adapter | 平台适配器注册表：Mock 可完整跑通；iGPSPORT/Garmin/Strava/COROS 骨架，申请到凭证后实现接口即接入                                                                                                                               |
-| 🧵 异步任务        | Celery 任务 + Beat 定时轮询（每 5 分钟）+ 失败指数退避重试；开发模式 EAGER 免 Redis                                                                                                                                      |
-| 📱 微信小程序端      | `wx-frontend/`：与 Web 端**功能对等**的原生小程序（12 页 / 5 tab）。微信一键登录（`code2session`，未配 AppID 自动降级演示身份）、Canvas 2D 手绘全部图表、`map` 组件轨迹回放、`wx.chooseMessageFile` 上传 FIT、短轮询替代 SSE、**三级兜底**完成第三方账号绑定             |
+| 🧵 异步任务        | `dispatch_run()` 显式解耦执行模型：有 Celery worker 走 Celery，没有则回退后台线程——**绝不把同步任务跑在 HTTP 请求里**（否则撞上 gunicorn `--timeout` 会被杀，记录永远停在 running）。含僵尸运行回收与 Beat 定时轮询                                    |
+| 📱 微信小程序端      | `wx-frontend/`：原生小程序（12 页 / 5 tab）。微信一键登录（`code2session`，未配 AppID 自动降级演示身份）、手机号一键绑定（`getPhoneNumber`）、真实头像昵称（微信「头像昵称填写能力」）、微信隐私授权（`requirePrivacyAuthorize`）、Canvas 2D 手绘全部图表、`map` 组件轨迹回放、`wx.chooseMessageFile` 上传 FIT、短轮询运行进度、**三级兜底**完成第三方账号绑定。注意：与 Web 端**功能对等**指核心同步流程，小程序端另有若干刻意差异（见 `wx-frontend/README.md`）             |
 
 ## 🚀 快速开始
 
@@ -122,7 +127,7 @@ celery -A config beat -l info                  # 定时调度（自动轮询同�
    - 目标账号勾选已绑定的平台账号；
    - 时间范围选 **文件完整范围**，选项保持默认（**坐标纠偏**与**智能去重**默认开启）；
    - 点「试运行预览」可先看将同步多少条活动、纠偏多少个轨迹点，确认后「创建任务」。
-5. 在任务详情页点**运行任务**，左侧配置、右侧执行图与运行统计实时更新（SSE）；
+5. 在任务详情页点**运行任务**，左侧配置、右侧执行图与运行统计实时更新（短轮询运行状态）；
 6. 到**活动矩阵**右键任一待同步/失败单元格 → 手动同步；
 7. **账号**页一键绑定「演示平台 (Mock)」体验授权流程；iGPSPORT / 佳明等未配置 OAuth 凭证的平台，     
    会提示缺哪些凭证，并可点「以演示身份绑定」跑通全链路（详见「接入真实平台」）；
@@ -146,9 +151,9 @@ VeloSync/
 │   ├── .env.example
 │   ├── config/                 # settings / urls / celery
 │   └── apps/
-│       ├── accounts/           # JWT 登录注册 + 查询参数认证（SSE 用）
-│       ├── platforms/          # 平台/账号模型、Fernet 加密、OAuth 流程、适配器
-│       ├── pipelines/          # 同步任务/节点/连线/运行记录、规格注册表、执行引擎、试运行规划、过滤器、Celery 任务、SSE
+│       ├── accounts/           # JWT 登录注册、第三方登录、手机号/资料、微信小程序登录
+│       ├── platforms/          # 平台/账号模型、Fernet 加密（含 client_secret）、OAuth 流程、Token 刷新、适配器
+│       ├── pipelines/          # 同步任务/节点/连线/运行记录、规格注册表、执行引擎、试运行规划、过滤器、Celery 任务、运行状态轮询
 │       ├── activities/         # 活动/同步状态/FIT 详情、去重、坐标转换、FIT 解析
 │       ├── synclogs/           # 同步日志
 │       ├── dashboard/          # 仪表盘统计
@@ -195,7 +200,7 @@ GET  /api/pipelines/sync-spec/                   规格目录：数据来源 / �
 POST /api/pipelines/sync-preview/                未保存配置的试运行预览（新建向导用）
 POST /api/pipelines/{id}/preview/                按当前或临时覆盖的配置试运行预览（不写入数据）
 POST /api/pipelines/{id}/run/                     执行
-GET  /api/pipelines/{id}/stream/?access_token=    SSE 实时进度（含执行统计 stats）
+GET  /api/pipelines/{id}/run-status/             轮询运行状态（节点状态 + 执行统计 stats）
 GET  /api/activities/ | matrix/                   活动与矩阵
 POST /api/activities/upload-fit/                  上传并解析 FIT 文件（multipart）
 GET  /api/activities/fit-history/                 FIT 导入历史（轻量列表，不含采样点）
@@ -302,7 +307,7 @@ SOCIAL_REDIRECT_BASE_URL=https://your-domain.com
 
 | 能力 | Web 端 | 小程序端 |
 | --- | --- | --- |
-| 实时进度 | SSE / EventSource | **短轮询** `pollRun()`（1.2s × 30 次，小程序不支持 SSE） |
+| 实时进度 | 短轮询运行状态（1.5s） | **短轮询** `pollRun()`（1.2s × 30 次） |
 | 图表 | Recharts | **Canvas 2D** 手绘（`utils/chart.js`：分图 / 叠加 / 饼图 / 趋势） |
 | 轨迹回放 | 高德 JS API | 内置 **`map` 组件** + polyline（坐标同为 GCJ-02） |
 | 上传 FIT | `<input type=file>` | **`wx.chooseMessageFile`** 从聊天记录选择 |
@@ -467,6 +472,6 @@ Key 在[高德控制台](https://console.amap.com/dev/key/app)申请，服务平
 - FIT 解析依赖 `fitparse`；爬升与 NP 在文件未记录时由采样点推算，与平台官方口径可能略有差异；
 - 未配置 `VITE_AMAP_KEY` 时 FIT 页用内置 SVG 轨迹简图（无路网底图、无回放）；
 - 超长活动（>30000 采样点）会抽稀，且单次详情响应可能达数 MB，生产建议加分页或抽稀参数；
-- SSE 采用轮询 PipelineRun 的简化实现，生产可切换 Redis Pub/Sub；
+- 长连接方案已**主动移除**：SSE 端点会独占请求槽位（全站仅 8 个），几个并发用户即可让 API 含健康检查一起失活，故统一改为短轮询 `run-status`；
 - 个别受限环境（如沙箱、CI 关闭安装脚本）下 esbuild/rollup 可能缺原生二进制，补装即可：  
   `yarn add -D --ignore-scripts @esbuild/win32-x64 @rollup/rollup-win32-x64-msvc`（macOS/Linux 无需处理）。
