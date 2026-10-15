@@ -48,10 +48,10 @@ class SocialAccount(models.Model):
 
 
 class UserProfile(models.Model):
-    """用户资料补充（手机号仅作展示 / 联系方式，不参与登录认证）
+    """用户资料补充（头像）
 
-    不做唯一约束：手机号允许重复（换绑、家人共用号码等场景），
-    且它不是身份标识 —— 身份标识始终是 (provider, openid)。
+    独立成表是为了让 User 保持轻量：头像以 base64 dataURL 存储（项目未接入
+    对象存储），直接挂在内置 User 上会拖慢每一次用户查询。
     """
 
     user = models.OneToOneField(
@@ -60,8 +60,6 @@ class UserProfile(models.Model):
         related_name="profile",
         verbose_name="用户",
     )
-    phone = models.CharField("手机号", max_length=20, blank=True, default="")
-    phone_bound_at = models.DateTimeField("手机号绑定时间", null=True, blank=True)
     # 用户自设头像。微信「头像昵称填写能力」给的是本地临时文件，前端读成
     # dataURL 提交；项目未引入对象存储 SDK，而头像压缩后 ≤ 200KB，直接入库
     # 可省掉一整套基础设施。字段给足余量，避免 base64 膨胀后溢出。
@@ -73,10 +71,4 @@ class UserProfile(models.Model):
         verbose_name_plural = "用户资料"
 
     def __str__(self):
-        return f"{self.user.username} · {self.phone or '未绑定手机号'}"
-
-    @property
-    def phone_masked(self) -> str:
-        """脱敏展示：138****8888"""
-        p = self.phone or ""
-        return f"{p[:3]}****{p[-4:]}" if len(p) == 11 else p
+        return f"{self.user.username} 的资料"

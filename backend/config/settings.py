@@ -153,8 +153,6 @@ REST_FRAMEWORK = {
         # 账密登录与注册是撞库/批量注册的主要入口
         "login": os.getenv("THROTTLE_LOGIN", "10/min"),
         "register": os.getenv("THROTTLE_REGISTER", "5/hour"),
-        # 每次调用都要去微信换手机号，会消耗接口额度
-        "phone": os.getenv("THROTTLE_PHONE", "10/hour"),
         "profile": os.getenv("THROTTLE_PROFILE", "30/hour"),
         # 试运行预览/运行任务：都要查库拉数据，给个宽松但有上限的额度
         "write": os.getenv("THROTTLE_WRITE", "120/hour"),

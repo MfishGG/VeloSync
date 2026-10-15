@@ -1,3 +1,4 @@
+import logging
 import secrets
 from urllib.parse import quote
 
@@ -5,7 +6,6 @@ from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.shortcuts import redirect
-from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -17,6 +17,8 @@ from . import social
 from .models import UserProfile
 from .serializers import RegisterSerializer, UserSerializer
 from .social import PROVIDER_META, SocialError
+
+logger = logging.getLogger(__name__)
 
 
 class ThrottledTokenRefreshView(TokenRefreshView):
@@ -73,8 +75,13 @@ class RegisterView(APIView):
         return Response(_token_pair(user), status=status.HTTP_201_CREATED)
 
 
+#: 注销账号需在请求体回传的确认词。注销不可逆，服务端再要一道确认 ——
+#: 前端也有二次确认，但前端不是安全边界，误触/脚本调用挡不住。
+DELETE_CONFIRM_PHRASE = "注销"
+
+
 class MeView(APIView):
-    """GET /api/auth/me/ —— 当前用户信息（含第三方绑定：微信头像 / OpenID）"""
+    """GET / DELETE /api/auth/me/ —— 当前用户信息 / 注销账号"""
 
     def get(self, request):
         user = (
@@ -82,40 +89,72 @@ class MeView(APIView):
         ) or request.user
         return Response(UserSerializer(user).data)
 
+    def get_throttles(self):
+        """只有 DELETE 计限流。
 
-class BindPhoneView(APIView):
-    """POST /api/auth/phone/ —— 绑定 / 换绑手机号
+        「我的」页每次 onShow 都调一次 GET /me/，若把它算进 write 额度
+        （120/hour），正常翻几次页面就会整页报错。注销是极低频操作，单独计足够。
+        """
+        if self.request.method == "DELETE":
+            self.throttle_scope = "write"
+        return super().get_throttles()
 
-    手机号在本项目**仅作展示与联系方式**，不承担登录身份，因此：
-    - 允许重复（不做唯一约束）；
-    - 允许后续换绑；
-    - 只接受微信 `getPhoneNumber` 的动态令牌换取的真实号码，不接受前端直接传号码
-      （前端不是安全边界，直接传号码等于任何人都能伪造）。
-    """
+    def delete(self, request):
+        """注销账号：级联删除该用户的全部数据，不可逆。
 
-    # 每次调用都要去微信换 access_token + 消费一次性 code，会消耗接口额度
-    throttle_scope = "phone"
+        为什么要有：隐私指引《你的权益》里承诺了「可申请注销账号，15 个工作日内
+        处理」，但后端此前没有任何实现 —— 只能靠人工收邮件 + Admin 手删，
+        漏掉一张表就是「声称删了但没删」。
 
-    def post(self, request):
-        code = (request.data.get("code") or "").strip()
-        if not code:
+        级联范围（全部由 on_delete=CASCADE 保证，无需手工清理）：
+        SocialAccount / UserProfile / PlatformAccount / Pipeline / Activity / SyncLog。
+        """
+        confirm = (request.data.get("confirm") or "").strip()
+        if confirm != DELETE_CONFIRM_PHRASE:
             return Response(
-                {"detail": "缺少手机号授权凭证 code"}, status=status.HTTP_400_BAD_REQUEST
+                {
+                    "detail": f"注销不可逆，请在 confirm 字段回传「{DELETE_CONFIRM_PHRASE}」以确认",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
+
+        user = request.user
+        user_pk = user.pk
+        # 先撤销平台侧授权：本地记录一删，就再没有 token 能调对方的 deauthorize 了。
+        revoked, failed = _revoke_platform_authorizations(user)
+        user.delete()
+        logger.info(
+            "用户 %s 已注销（平台授权：撤销成功 %s，失败或无能力 %s）", user_pk, revoked, failed
+        )
+        return Response({"detail": "账号已注销", "revoked_platforms": revoked})
+
+
+def _revoke_platform_authorizations(user) -> tuple[int, int]:
+    """注销前逐个通知平台撤销授权，返回 (成功数, 失败数)。
+
+    失败不阻断注销 —— 用户要求删号时，不能因为对方接口抽风就把人困在应用里。
+    与解绑（`PlatformAccountViewSet.perform_destroy`）同一口径。
+
+    延迟导入 platforms：accounts 与 platforms 是两条独立的业务线，
+    模块级互相 import 会让任何一方的重构都牵动另一方。
+    """
+    from apps.platforms.adapters import get_adapter
+    from apps.platforms.models import PlatformAccount
+
+    ok = failed = 0
+    qs = PlatformAccount.objects.filter(user=user).select_related("platform")
+    # `is_demo` 是 property（按 platform_user_id 前缀判断），进不了 queryset 的
+    # filter，只能在 Python 层筛 —— 否则会把演示身份也发去平台问一圈。
+    for account in [a for a in qs if not a.is_demo]:
         try:
-            phone = social.exchange_phone_number(code)
-        except SocialError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-
-        profile, _ = UserProfile.objects.get_or_create(user=request.user)
-        profile.phone = phone
-        profile.phone_bound_at = timezone.now()
-        profile.save(update_fields=["phone", "phone_bound_at", "updated_at"])
-
-        user = (
-            User.objects.filter(pk=request.user.pk).prefetch_related("social_accounts").first()
-        ) or request.user
-        return Response(UserSerializer(user).data)
+            if get_adapter(account).revoke_token():
+                ok += 1
+            else:
+                failed += 1  # 平台未提供 deauthorize，已尽力
+        except Exception as exc:  # noqa: BLE001 —— 平台侧失败不应阻断注销
+            failed += 1
+            logger.warning("注销时撤销 %s 授权失败：%s", account.platform.code, exc)
+    return ok, failed
 
 
 # 头像上限。前端用 canvas 压到 200KB 以内再传，这里留一倍余量防止绕过前端。

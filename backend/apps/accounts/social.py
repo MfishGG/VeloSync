@@ -17,7 +17,6 @@ from typing import Any
 
 from django.conf import settings
 from django.contrib.auth.models import User
-from django.core.cache import cache
 
 from .models import SocialAccount
 
@@ -290,17 +289,8 @@ def miniprogram_profile(
     }
 
 
-# ---------------- 小程序 access_token（带缓存） ----------------
-
-# access_token 有效期 7200s；提前 300s 判为过期，避免卡在边界上拿到刚失效的 token。
-_TOKEN_CACHE_KEY = "wechat_mp_access_token"
-_TOKEN_SAFETY_MARGIN = 300
-# 这些错误码表示 token 本身失效（被别处刷新踢掉），清缓存重取一次即可
-_TOKEN_INVALID_CODES = {40001, 40014, 42001}
-
 # 高频错误码的可读提示，直接写进报错里，省得对着数字查文档
 _WX_ERRCODE_HINT = {
-    40001: "access_token 已失效",
     40013: "AppID 无效，请检查 WECHAT_MP_APP_ID",
     40125: "AppSecret 无效，请检查 WECHAT_MP_APP_SECRET",
     47001: "请求数据格式错误",
@@ -317,88 +307,6 @@ def _wx_error(data, fallback: str) -> str:
     hint = _WX_ERRCODE_HINT.get(code, "")
     suffix = f"（{hint}）" if hint else ""
     return f"{fallback}（errcode={code}）{msg}{suffix}"
-
-
-def _miniprogram_access_token(force_refresh: bool = False) -> str:
-    """获取小程序 access_token，结果按 expires_in 缓存。
-
-    为什么必须缓存：`cgi-bin/token` **每次调用都会签发一个新 token，旧 token 随即失效**。
-    若每次绑定手机号都现取，并发或稍密集的操作会互相把对方的 token 踢掉，
-    对外表现为随机出现的 `40001 invalid credential`；该接口另有每日调用配额，
-    现取也容易把额度耗光。
-
-    缓存为进程内（Django 默认 LocMemCache），多 worker 时每个进程各持一份 ——
-    相比「每次请求都取」已是量级上的改善；若要严格全局唯一，应换共享缓存
-    （Redis / Memcached）并在刷新时加分布式锁。
-    """
-    cfg = getattr(settings, "WECHAT_MINIPROGRAM", {}) or {}
-    app_id, app_secret = cfg.get("app_id"), cfg.get("app_secret")
-    if not (app_id and app_secret):
-        raise SocialError(
-            "后端未配置小程序凭证（WECHAT_MP_APP_ID / WECHAT_MP_APP_SECRET），无法获取手机号"
-        )
-
-    if not force_refresh:
-        cached = cache.get(_TOKEN_CACHE_KEY)
-        if cached:
-            return cached
-
-    data = _http_json(
-        "https://api.weixin.qq.com/cgi-bin/token?"
-        f"grant_type=client_credential&appid={app_id}&secret={app_secret}"
-    )
-    token = data.get("access_token") if isinstance(data, dict) else ""
-    if not token:
-        raise SocialError(_wx_error(data, "获取微信 access_token 失败"))
-
-    try:
-        expires_in = int(data.get("expires_in") or 7200)
-    except (TypeError, ValueError):
-        expires_in = 7200
-    ttl = expires_in - _TOKEN_SAFETY_MARGIN
-    if ttl > 0:
-        cache.set(_TOKEN_CACHE_KEY, token, ttl)
-    return token
-
-
-def exchange_phone_number(code: str) -> str:
-    """用 getPhoneNumber 返回的动态令牌换取手机号明文。
-
-    新版规范（基础库 2.21.2+）：前端 `button open-type="getPhoneNumber"` 回调里拿到的是
-    一次性 `code`（**不是**旧版的 encryptedData / iv），后端拿它调微信
-    `phonenumber.getPhoneNumber` 消费，直接取回明文手机号 —— 无需自行 AES 解密，
-    也就无需维护 session_key。该 code 有效期 5 分钟且只能消费一次。
-
-    注意：此 code 与 wx.login 的 code 用途不同，不可混用。
-
-    该接口用 access_token 鉴权（与 code2session 的 appid+secret 直传不同）。
-    token 失效时自动清缓存重取一次 —— 多进程部署下 token 可能被其他进程刷新掉，
-    不重试就是随机失败。
-    """
-    cfg = getattr(settings, "WECHAT_MINIPROGRAM", {}) or {}
-    if not (cfg.get("app_id") and cfg.get("app_secret")):
-        raise SocialError("后端未配置小程序凭证（WECHAT_MP_APP_ID / WECHAT_MP_APP_SECRET），无法获取手机号")
-    if not code:
-        raise SocialError("缺少手机号授权凭证")
-
-    def _consume(token: str):
-        return _http_json(
-            "https://api.weixin.qq.com/wxa/business/getuserphonenumber"
-            f"?access_token={token}",
-            {"code": code},
-        )
-
-    result = _consume(_miniprogram_access_token())
-    if isinstance(result, dict) and result.get("errcode") in _TOKEN_INVALID_CODES:
-        result = _consume(_miniprogram_access_token(force_refresh=True))
-
-    if not isinstance(result, dict) or result.get("errcode"):
-        raise SocialError(_wx_error(result, "获取手机号失败"))
-
-    phone = ((result.get("phone_info") or {}).get("phoneNumber") or "").strip()
-    if not phone:
-        raise SocialError("微信未返回手机号")
-    return phone
 
 
 def get_or_create_user(provider: str, profile: dict) -> tuple[User, bool]:
