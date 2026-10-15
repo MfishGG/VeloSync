@@ -4,7 +4,7 @@ import { CheckCircle2, Loader2 } from "lucide-react";
 import BrandMark from "../components/BrandMark";
 import SocialIcon from "../components/SocialIcon";
 import SocialLoginDialog from "../components/SocialLoginDialog";
-import { fetchSocialProviders, socialAuthorize } from "../api/queries";
+import { fetchDemoStatus, fetchSocialProviders, socialAuthorize } from "../api/queries";
 import type { SocialProvider } from "../api/types";
 import { useAuthStore } from "../stores/authStore";
 
@@ -16,6 +16,7 @@ export default function LoginPage() {
   const login = useAuthStore((s) => s.login);
   const register = useAuthStore((s) => s.register);
   const socialLogin = useAuthStore((s) => s.socialLogin);
+  const demoLogin = useAuthStore((s) => s.demoLogin);
   const navigate = useNavigate();
   const [params] = useSearchParams();
 
@@ -37,6 +38,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [providers, setProviders] = useState<SocialProvider[]>([]);
   const [providersFailed, setProvidersFailed] = useState(false);
+  const [demoEnabled, setDemoEnabled] = useState(false);
   const [dialog, setDialog] = useState<SocialProvider | null>(null);
   const noticeTimer = useRef<number | undefined>(undefined);
 
@@ -61,6 +63,20 @@ export default function LoginPage() {
   }, []);
 
   useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
+
+  // 演示入口是否可用由后端决定（DEMO_MODE）。取不到就不显示 ——
+  // 演示入口是锦上添花，连不上后端时不该多出一个点了必然失败的按钮。
+  useEffect(() => {
+    let alive = true;
+    fetchDemoStatus()
+      .then((res) => alive && setDemoEnabled(!!res.enabled))
+      .catch(() => {
+        if (alive) setDemoEnabled(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   if (token) return <Navigate to="/" replace />;
 
@@ -134,6 +150,26 @@ export default function LoginPage() {
   const switchTab = (next: "login" | "register") => {
     setTab(next);
     setError(null);
+  };
+
+  /**
+   * 进入演示账号。
+   *
+   * 这里原本是「一键填充演示账号（demo / demo123456）」—— 那是本地 seed_demo 的
+   * 口令。线上演示账号刻意不带可用口令（只有演示入口能进），继续填口令只会得到
+   * 一次注定失败的登录。改为直接向后端要 token。
+   */
+  const enterDemo = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await demoLogin();
+      navigate("/", { replace: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "进入演示账号失败");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -295,15 +331,14 @@ export default function LoginPage() {
           )
         )}
 
-        {tab === "login" && (
+        {tab === "login" && demoEnabled && (
           <button
-            onClick={() => {
-              setUsername("demo");
-              setPassword("demo123456");
-            }}
-            className="mt-5 w-full rounded-lg border border-dashed border-slate-200 py-2 text-xs text-slate-400 hover:border-indigo-300 hover:text-indigo-500"
+            onClick={() => void enterDemo()}
+            disabled={loading}
+            className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-200 py-2 text-xs text-slate-400 transition hover:border-indigo-300 hover:text-indigo-500 disabled:opacity-50"
           >
-            一键填充演示账号（demo / demo123456）
+            {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            进入演示账号（无需注册，含示例数据）
           </button>
         )}
       </div>

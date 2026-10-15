@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { clearTokens, setTokens } from "../api/client";
 import { queryClient } from "../api/queryClient";
-import { fetchMe, login as apiLogin, register as apiRegister, socialLogin as apiSocialLogin } from "../api/queries";
+import { fetchMe, login as apiLogin, register as apiRegister, socialLogin as apiSocialLogin, demoLogin as apiDemoLogin } from "../api/queries";
 import type { SocialLoginResult, TokenPair, User } from "../api/types";
 
 interface AuthState {
@@ -15,6 +15,8 @@ interface AuthState {
     nickname?: string;
   }) => Promise<void>;
   socialLogin: (vars: { provider: string; code?: string; identity?: string }) => Promise<SocialLoginResult>;
+  /** 进入演示账号（提审 / 对外演示）：无需账密，也不需要配置任何平台凭证 */
+  demoLogin: () => Promise<void>;
   /** OAuth 回调页落地 token 用（user 缺省时自动拉取） */
   applyTokenPair: (access: string, refresh: string, user?: User | null) => void;
   logout: () => void;
@@ -62,6 +64,12 @@ export const useAuthStore = create<AuthState>((set, get) => {
       setTokens(pair.access, pair.refresh);
       set({ token: pair.access, user: pair.user });
       return pair;
+    },
+
+    async demoLogin() {
+      const pair = await apiDemoLogin();
+      setTokens(pair.access, pair.refresh);
+      set({ token: pair.access, user: pair.user });
     },
 
     logout: wipe,

@@ -3,6 +3,8 @@ import { api } from "./client";
 import type {
   Activity,
   DashboardStats,
+  DemoLoginResult,
+  DemoStatus,
   FitDetail,
   FitHistoryItem,
   FitUploadResult,
@@ -320,4 +322,22 @@ export function socialLogin(vars: { provider: string; code?: string; identity?: 
     method: "POST",
     body: JSON.stringify(vars),
   });
+}
+
+/**
+ * 演示模式是否可用。
+ *
+ * 关闭时后端仍返回 200 + `{enabled:false}`，前端据此决定是否渲染入口 ——
+ * 而不是渲染出来再让用户点了报错。
+ */
+export function fetchDemoStatus() {
+  return api<DemoStatus>("/auth/demo/");
+}
+
+/**
+ * 进入演示账号。无需账密、无需微信授权，也不需要配置任何平台凭证；
+ * 返回的 token 与正常登录完全一致。
+ */
+export function demoLogin() {
+  return api<DemoLoginResult>("/auth/demo/", { method: "POST" });
 }

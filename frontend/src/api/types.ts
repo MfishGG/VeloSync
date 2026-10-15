@@ -36,6 +36,17 @@ export interface SocialLoginResult extends TokenPair {
   provider: string;
 }
 
+/** 演示模式是否可用（后端 DEMO_MODE 开关） */
+export interface DemoStatus {
+  enabled: boolean;
+  username: string;
+}
+
+/** 演示账号登录结果。`demo` 恒为 true，用于前端标记「当前是演示态」 */
+export interface DemoLoginResult extends TokenPair {
+  demo: boolean;
+}
+
 export interface Platform {
   id: number;
   code: string;
