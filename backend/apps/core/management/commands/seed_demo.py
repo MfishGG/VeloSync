@@ -1,6 +1,11 @@
 """创建演示数据：python manage.py seed_demo
 
-- 平台定义（mock / igpsport / garmin / strava / coros）
+⚠️ 本命令会创建 admin / admin123456 超级管理员弱口令，**不要在生产库执行**。
+
+平台基础数据（mock / igpsport / garmin / strava / coros）**不在本命令里** ——
+它在迁移 `platforms/0004_seed_platforms` 中预置，`migrate` 时自动写入。
+本命令只负责演示内容：
+
 - 演示用户 demo / demo123456，管理员 admin / admin123456
 - Mock 平台账号 + 30 条近 30 天活动 + 同步状态 + 日志
 - 两条示例管道（真实目标 & Mock 回环）
@@ -18,50 +23,6 @@ from apps.platforms.models import Platform, PlatformAccount
 from apps.pipelines.models import Pipeline
 from apps.synclogs.models import SyncLog
 
-PLATFORMS = [
-    {
-        "code": "mock",
-        "name": "演示平台 (Mock)",
-        "auth_type": "mock",
-        "capabilities": {"fetch": True, "upload": True},
-        "app_scheme": "",
-        "miniprogram_appid": "",
-    },
-    {
-        "code": "igpsport",
-        "name": "iGPSPORT",
-        "auth_type": "oauth2",
-        "capabilities": {"fetch": True, "upload": False},
-        # 移动端绑定兜底：复制该 scheme 到系统浏览器可唤起官方 App
-        "app_scheme": "igpsport://",
-        # 拿到 iGPSPORT 官方小程序 AppID 后填这里，小程序内即可直接跳转授权
-        "miniprogram_appid": "",
-    },
-    {
-        "code": "garmin",
-        "name": "Garmin Connect",
-        "auth_type": "oauth2",
-        "capabilities": {"fetch": True, "upload": True},
-        "app_scheme": "garminconnect://",
-        "miniprogram_appid": "",
-    },
-    {
-        "code": "strava",
-        "name": "Strava",
-        "auth_type": "oauth2",
-        "capabilities": {"fetch": True, "upload": True},
-        "app_scheme": "strava://",
-        "miniprogram_appid": "",
-    },
-    {
-        "code": "coros",
-        "name": "COROS",
-        "auth_type": "oauth2",
-        "capabilities": {"fetch": True, "upload": True},
-        "app_scheme": "coros://",
-        "miniprogram_appid": "",
-    },
-]
 
 CYCLING_NAMES = [
     "清晨骑行 · 滨江线",
@@ -83,11 +44,15 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         rng = random.Random(42)
 
-        # 1. 平台定义
-        for spec in PLATFORMS:
-            Platform.objects.update_or_create(code=spec["code"], defaults=spec)
+        # 1. 平台：已由迁移 0004_seed_platforms 预置，这里只取不建
         platforms = {p.code: p for p in Platform.objects.all()}
-        self.stdout.write(f"平台定义就绪：{', '.join(platforms)}")
+        if not platforms:
+            self.stderr.write(
+                "没有找到任何平台。请先执行 `python manage.py migrate` —— "
+                "平台基础数据在迁移 platforms/0004_seed_platforms 里。"
+            )
+            return
+        self.stdout.write(f"平台就绪：{', '.join(platforms)}")
 
         # 2. 用户
         user, created = User.objects.get_or_create(

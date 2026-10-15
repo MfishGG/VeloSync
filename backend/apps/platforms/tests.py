@@ -19,6 +19,7 @@ from .crypto import (
     key_source,
 )
 from .models import Platform, PlatformAccount
+from .testing import make_platform
 from .tokens import TokenError, ensure_fresh_token, refresh_access_token
 
 
@@ -59,9 +60,34 @@ class CryptoTests(TestCase):
             crypto._fernet_instance = original
 
 
+class SeededPlatformsTests(TestCase):
+    """迁移 0004_seed_platforms 必须把平台基础数据预置好。
+
+    守的是一个具体的失败现场：平台此前唯一的创建途径是 seed_demo，而那个命令
+    会造 admin/admin123456 弱口令、不能在生产跑 —— 于是线上库是空的，
+    账号管理页「可绑定的平台」下面什么都没有，用户既绑不了也看不出原因。
+    这条测试保证「迁移跑完就有平台可绑」。
+    """
+
+    def test_platforms_are_seeded(self):
+        codes = set(Platform.objects.values_list("code", flat=True))
+        self.assertTrue(
+            {"mock", "igpsport", "garmin", "strava", "coros"} <= codes,
+            f"预置平台缺失，当前只有：{sorted(codes)}",
+        )
+
+    def test_seeded_platforms_are_active(self):
+        """接口走的是 filter(is_active=True)，预置数据必须落在可见的那一侧。"""
+        self.assertEqual(
+            Platform.objects.filter(is_active=True).count(),
+            Platform.objects.count(),
+            "预置平台必须 is_active=True，否则接口不返回、页面照样是空的",
+        )
+
+
 class EncryptedFieldTests(TestCase):
     def test_client_secret_is_encrypted_at_rest(self):
-        platform = Platform.objects.create(code="strava", name="Strava", client_secret="s3cr3t")
+        platform = make_platform("strava", name="Strava", client_secret="s3cr3t")
         platform.refresh_from_db()
         # 通过 ORM 读出来是明文
         self.assertEqual(platform.client_secret, "s3cr3t")
@@ -76,7 +102,7 @@ class EncryptedFieldTests(TestCase):
 
     def test_legacy_plaintext_row_is_readable(self):
         """历史明文记录仍要能读出来（首次保存时自动转密文），否则升级即炸。"""
-        platform = Platform.objects.create(code="garmin", name="Garmin", client_secret="")
+        platform = make_platform("garmin", name="Garmin", client_secret="")
         with connection.cursor() as cursor:
             cursor.execute(
                 "UPDATE platforms_platform SET client_secret = %s WHERE id = %s",
@@ -89,8 +115,8 @@ class EncryptedFieldTests(TestCase):
 class TokenRefreshTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user("rider", password="x")
-        self.platform = Platform.objects.create(
-            code="strava",
+        self.platform = make_platform(
+            "strava",
             name="Strava",
             auth_type="oauth2",
             token_url="https://example.test/oauth/token",

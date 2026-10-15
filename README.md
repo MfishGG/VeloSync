@@ -60,8 +60,8 @@ python -m venv .venv
 # source .venv/bin/activate
 
 pip install -r requirements.txt
-python manage.py migrate          # 建表到 MySQL velosync
-python manage.py seed_demo        # 演示数据：30 条活动 + 2 条同步任务
+python manage.py migrate          # 建表 + 预置平台基础数据（mock/iGPSPORT/Garmin/Strava/COROS）
+python manage.py seed_demo        # 演示数据：30 条活动 + 2 条同步任务（可选，仅本地演示）
 python manage.py runserver        # http://127.0.0.1:8000
 ```
 

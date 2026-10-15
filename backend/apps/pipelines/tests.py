@@ -14,6 +14,7 @@ from rest_framework.test import APIClient
 from apps.activities.models import Activity, ActivitySyncState
 from apps.platforms.adapters import AdapterError, MockAdapter
 from apps.platforms.models import Platform, PlatformAccount
+from apps.platforms.testing import make_platform
 
 from .engine import PipelineEngine, TaskPlanner
 from .models import Pipeline, PipelineRun
@@ -23,11 +24,11 @@ from .tasks import dispatch_run, reap_stale_runs
 class BaseFixtures(TestCase):
     def setUp(self):
         self.user = User.objects.create_user("rider", password="x")
-        self.mock = Platform.objects.create(
-            code="mock", name="演示平台", auth_type="mock", capabilities={"upload": True}
+        self.mock = make_platform(
+            "mock", name="演示平台", auth_type="mock", capabilities={"upload": True}
         )
-        self.other = Platform.objects.create(
-            code="other", name="其他平台", auth_type="mock", capabilities={"upload": True}
+        self.other = make_platform(
+            "other", name="其他平台", auth_type="mock", capabilities={"upload": True}
         )
         self.account = PlatformAccount.objects.create(
             user=self.user, platform=self.mock, platform_user_id="mock-1"
@@ -183,8 +184,8 @@ class RunStatusEndpointTests(BaseFixtures):
 class EngineTests(BaseFixtures):
     def test_platform_source_failure_is_not_swallowed(self):
         """吞掉 AdapterError 会让用户看到「success（0 条）」，而真相是平台没实现。"""
-        platform = Platform.objects.create(
-            code="strava", name="Strava", auth_type="oauth2", api_base="https://api.test"
+        platform = make_platform(
+            "strava", name="Strava", auth_type="oauth2", api_base="https://api.test"
         )
         account = PlatformAccount.objects.create(
             user=self.user, platform=platform, platform_user_id="12345"
