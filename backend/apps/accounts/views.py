@@ -386,3 +386,52 @@ class WxMiniProgramLoginView(APIView):
         payload["provider"] = "wechat"
         payload["mode"] = "oauth" if social.miniprogram_enabled() else "mock"
         return Response(payload, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+class DemoLoginView(APIView):
+    """GET / POST /api/auth/demo/ —— 演示账号入口（提审 / 对外演示）
+
+    为什么要有它：小程序唯一的登录方式是微信，而审核员用微信登录后拿到的是一个
+    **空账号** —— 没有活动、没有任务、没有日志，等于无从评估产品做得怎么样。
+    演示入口让他们不必配置任何平台凭证，就能看到完整形态并走通全流程。
+
+    三道约束：
+
+    1. `DEMO_MODE=0` 时 POST 直接 404。演示入口只在需要时敞开，不需要时不留着。
+    2. 独立限流额度（scope=demo）而不是复用 login。审核员会反复进出，
+       10/min 的撞库额度对它偏紧；但完全不限流又等于给了个免费的 token 工厂。
+    3. 演示账号缺失时就地补建。它确实可能被误删（页面上就有「注销账号」入口），
+       而「演示入口点进去报错」在提审场合是最坏的结果 —— 补建一个固定账号成本
+       极低，且只在真正缺失时发生，不会覆盖已有数据。
+
+    注意它**不重置**已有演示数据：两位访客同时在线时，重置会让对方正在看的页面
+    突然变样。要「整洁的演示数据」用 `manage.py seed_demo_account --reset`。
+    """
+
+    permission_classes = [AllowAny]
+    throttle_scope = "demo"
+
+    def get(self, request):
+        """给前端判断「要不要渲染演示入口」。默认返回 200 —— 关闭时也让前端能问。"""
+        from apps.core.demo import demo_username
+
+        return Response({"enabled": bool(settings.DEMO_MODE), "username": demo_username()})
+
+    def post(self, request):
+        if not settings.DEMO_MODE:
+            return Response({"detail": "演示模式未开启"}, status=status.HTTP_404_NOT_FOUND)
+
+        # 延迟导入：accounts 与 activities / pipelines 是并列的业务线，
+        # 模块级互相 import 会让任何一方的重构都牵动另一方（与
+        # _revoke_platform_authorizations 同一口径）。
+        from apps.core import demo
+
+        try:
+            user, _created, _stats = demo.seed_demo_account()
+        except demo.DemoDataError as exc:
+            # 平台基础数据缺失 —— 这不是「演示没配」，是部署没跑迁移，要说清楚
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        payload = _token_pair(user)
+        payload["demo"] = True
+        return Response(payload)
