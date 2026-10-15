@@ -16,6 +16,11 @@
         选择平台完成授权，之后即可自动同步该平台的运动记录
       </view>
 
+      <!-- 列表为空时给个说明，不要留一片空白：用户会以为页面坏了 -->
+      <view class="empty" wx:if="{{platforms.length === 0}}">
+        <view class="empty__icon">📡</view>暂无可绑定的平台
+      </view>
+
       <view class="pcard" wx:for="{{platforms}}" wx:key="id">
         <view class="row-between">
           <view class="row-gap grow">
