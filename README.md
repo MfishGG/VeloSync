@@ -30,7 +30,7 @@
 | 🖥 三栏工作台       | 左侧导航可折叠可拖拽调宽，右侧上下文面板随选中对象切换                                                                                                                                                                     |
 | 🧩 插件化 Adapter | 平台适配器注册表：Mock 可完整跑通；iGPSPORT/Garmin/Strava/COROS 骨架，申请到凭证后实现接口即接入                                                                                                                               |
 | 🧵 异步任务        | `dispatch_run()` 显式解耦执行模型：有 Celery worker 走 Celery，没有则回退后台线程——**绝不把同步任务跑在 HTTP 请求里**（否则撞上 gunicorn `--timeout` 会被杀，记录永远停在 running）。含僵尸运行回收与 Beat 定时轮询                                    |
-| 📱 微信小程序端      | `wx-frontend/`：原生小程序（12 页 / 5 tab）。微信一键登录（`code2session`，未配 AppID 自动降级演示身份）、真实头像昵称（微信「头像昵称填写能力」）、微信隐私授权（`requirePrivacyAuthorize`）、**账号注销**（服务端级联删除 + 平台侧撤销授权）、Canvas 2D 手绘全部图表、`map` 组件轨迹回放、`wx.chooseMessageFile` 上传 FIT、短轮询运行进度、**三级兜底**完成第三方账号绑定。注意：与 Web 端**功能对等**指核心同步流程，小程序端另有若干刻意差异（见 `wx-frontend/README.md`）             |
+| 📱 微信小程序端      | `wx-frontend/`：原生小程序（12 页 / 5 tab）。微信一键登录（`code2session`，未配 AppID 自动降级演示身份）、**演示模式一键进入**（提审 / 对外演示，无需授权，见「演示模式」）、真实头像昵称（微信「头像昵称填写能力」）、微信隐私授权（`requirePrivacyAuthorize`）、**账号注销**（服务端级联删除 + 平台侧撤销授权）、Canvas 2D 手绘全部图表、`map` 组件轨迹回放、`wx.chooseMessageFile` 上传 FIT、短轮询运行进度、**三级兜底**完成第三方账号绑定。注意：与 Web 端**功能对等**指核心同步流程，小程序端另有若干刻意差异（见 `wx-frontend/README.md`）             |
 
 ## 🚀 快速开始
 
@@ -61,9 +61,12 @@ python -m venv .venv
 
 pip install -r requirements.txt
 python manage.py migrate          # 建表 + 预置平台基础数据（mock/iGPSPORT/Garmin/Strava/COROS）
-python manage.py seed_demo        # 演示数据：30 条活动 + 2 条同步任务（可选，仅本地演示）
+python manage.py seed_demo        # 本地演示数据：30 条活动 + 3 条同步任务（含 admin 弱口令，勿在生产执行）
 python manage.py runserver        # http://127.0.0.1:8000
 ```
+
+> 线上 / 提审要一份演示数据时用 `python manage.py seed_demo_account`（`--reset` 可重建）——
+> 内容相同但不创建 admin 弱口令，容器启动时也会按 `DEMO_MODE` 自动执行（见「演示模式」）。
 
 > 想切回 SQLite：把 `.env` 里 `DB_ENGINE=mysql` 改成 `DB_ENGINE=sqlite` 即可，其余不动。
 
@@ -86,12 +89,16 @@ yarn dev                          # http://localhost:5173
 
 | 账号      | 密码            | 用途                        |
 | ------- | ------------- | ------------------------- |
-| `demo`  | `demo123456`  | 前台工作台（含 30 条演示活动、2 条同步任务） |
-| `admin` | `admin123456` | Django Admin 后台 `/admin/` |
+| `demo`  | `demo123456`  | 前台工作台（本地 `seed_demo` 创建；线上演示账号没有可用口令） |
+| `admin` | `admin123456` | Django Admin 后台 `/admin/`（仅本地 `seed_demo` 创建） |
+
+> **线上 / 提审怎么进**：见下方「演示模式」——登录页的「进入演示账号」按钮，
+> 不需要口令、也不需要配置任何平台凭证。
 
 ### 4. 启用 Redis + Celery 异步（可选）
 
-默认 `CELERY_TASK_ALWAYS_EAGER=1`：任务同步执行，**不需要 Redis**。要真正异步：
+默认 `CELERY_TASK_ALWAYS_EAGER=0`：任务交给 Celery，**没起 worker 时自动回退到后台线程**，
+所以本地不装 Redis 也能跑。要真正异步并启用定时轮询：
 
 ```bash
 docker compose up -d redis        # 只起 Redis 7（数据库用本地 MySQL，无需容器）
@@ -115,6 +122,24 @@ celery -A config beat -l info                  # 定时调度（自动轮询同�
 
 真机预览把 `baseUrl` 改成电脑内网 IP（如 `http://192.168.1.5:8000/api`）；开发版/体验版也可在登录页底部的「接口地址」入口运行时修改（该入口在正式版不渲染，「设置」页则任何版本都不再暴露）。  
 第三方账号绑定、图标说明、待补资料清单详见 **[`wx-frontend/README.md`](wx-frontend/README.md)**。
+
+## 🎭 演示模式（提审 / 对外演示）
+
+审核员或演示对象用微信登录时拿到的是一个**空账号** —— 没有活动、没有任务、没有日志，
+等于无从评估产品做得怎么样。演示模式为此准备了一个预置好的账号。
+
+- **入口**：小程序登录页「体验演示账号」，Web 登录页「进入演示账号」。两条路都调用
+  `POST /api/auth/demo/`，直接换成演示账号的 token —— 不需要口令、微信授权或任何平台凭证。
+- **开箱有内容**：近 30 天 30 条活动、同步状态矩阵、20 条日志、3 条示例同步任务。
+  由 `python manage.py seed_demo_account` 产出（加 `--reset` 清空重建）。
+- **自动预置**：容器启动时 entrypoint 按 `DEMO_MODE` 自动执行该命令，不必记得手动跑
+  ——「靠人记住的初始化步骤」正是上一轮踩过的坑。
+- **开关**：`DEMO_MODE`（默认 `1`）。设为 `0` 后 `POST /api/auth/demo/` 返回 404，
+  两端的入口也不再渲染；演示数据仍留在库里（要彻底清掉：以演示身份走一次「注销账号」）。
+- **安全**：演示账号用 `set_unusable_password()` —— 它只能从这个入口进，
+  `/api/auth/login/` 上不会凭空多出一个可撞库的弱口令账号。入口限流 `THROTTLE_DEMO`（默认 60/hour）。
+- **共享数据**：所有访客共用同一个演示账号，因此界面会标注「当前为演示模式」。
+  提审前跑一次 `seed_demo_account --reset`，可保证审核员看到的数据是整洁的。
 
 ## 🎬 演示玩法
 
@@ -182,7 +207,9 @@ VeloSync/
 ## 🔌 API 一览（OpenAPI：`/api/docs/`）
 
 ```
-POST /api/auth/login/ | refresh/ | register/      GET /api/auth/me/
+POST /api/auth/login/ | refresh/ | register/      GET /api/auth/me/（DELETE 注销账号）
+GET  /api/auth/demo/                              演示入口是否开启（DEMO_MODE）
+POST /api/auth/demo/                              进入演示账号（提审 / 对外演示，无需口令）
 GET  /api/auth/social/providers/                  快捷登录方式（?channel=web|miniprogram，
                                                   默认只返回 web；小程序专用项带 channel=miniprogram）
 GET  /api/auth/wx/miniprogram/                    小程序登录模式（GET）/ wx.login 一键登录（POST）

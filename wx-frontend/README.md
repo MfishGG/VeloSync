@@ -9,7 +9,7 @@
 
 | 模块 | Web 实现 | 小程序实现 | 备注 |
 | --- | --- | --- | --- |
-| 登录 / 注册 | React 表单 + JWT | `pages/login` | 账密 / 注册切换 + **微信一键登录**（无 QQ·微博） |
+| 登录 / 注册 | React 表单 + JWT | `pages/login` | **微信一键登录** + **演示模式入口**（`DEMO_MODE` 开启时才渲染；小程序端无账密注册） |
 | 仪表盘 | Recharts 饼图 + 折线 | `pages/dashboard` | Canvas 2D（`utils/chart.js` 的 `drawPie` / `drawTrend`） |
 | 同步任务列表 | TanStack Query 轮询 | `pages/pipelines` | 短轮询（小程序不支持 SSE） |
 | 新建任务向导 | 四步向导 | `pages/pipeline-new` | 四步分步校验，`components/sync-form` 复用 |
@@ -31,7 +31,7 @@
 ```
 wx-frontend/
 ├── app.js                      # 全局登录态恢复 / 自定义 baseUrl
-├── app.json                    # 12 页面 + 5 tabBar + 定位权限声明
+├── app.json                    # 12 页面 + 5 tabBar（不申请任何定位权限）
 ├── app.wxss                    # 仅 @import styles/common.wxss
 ├── config.js                   # ★ 后端地址 / 官方小程序 / 官方 App 链接
 ├── project.config.json         # urlCheck:false（本地联调免域名校验）

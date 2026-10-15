@@ -119,7 +119,8 @@ CREATE DATABASE IF NOT EXISTS velosync
   "CELERY_TASK_ALWAYS_EAGER": "0",
   "CELERY_BROKER_URL": "redis://<云托管 Redis 内网地址>:6379/0",
   "CACHE_URL": "redis://<云托管 Redis 内网地址>:6379/1",
-  "RUN_MODE": "web"
+  "RUN_MODE": "web",
+  "DEMO_MODE": "1"
 }
 ```
 
@@ -164,6 +165,24 @@ python manage.py deploy_check
 > 是必须有个进程去投递。
 >
 > ⚠️ 三个服务都要能连上同一个 Redis（`CELERY_BROKER_URL`），否则投递与消费对不上。
+
+
+### 3.7 演示模式（`DEMO_MODE`）
+
+开启后，审核员 / 演示对象不用配置任何平台凭证、也不用等数据，就能看到一个有内容的账号。
+
+- **它会做什么**：容器启动时（`RUN_MODE=web`）自动执行 `python manage.py seed_demo_account`，
+  预置演示账号（30 条活动 + 同步状态矩阵 + 日志 + 3 条示例任务）；
+  同时开放 `POST /api/auth/demo/`，小程序登录页与 Web 登录页据此渲染「进入演示账号」入口。
+- **默认开启**（`DEMO_MODE=1`）。这个开关存在的意义就是「提审时进得去」，
+  默认关闭会让入口安静地消失 —— 那是最难排查的一类失败。
+- **关闭**：设 `DEMO_MODE=0` 重新部署。该接口随即返回 404，两端入口也不再渲染，
+  但演示数据仍留在库里（要彻底清掉：以演示身份走一次「注销账号」，或直接删 `demo` 用户）。
+- **口令**：演示账号没有可用口令（`set_unusable_password`），只能从演示入口进入，
+  因此 `/api/auth/login/` 上不会多出一个可被撞库的弱口令账号。
+- **共享**：所有访客共用同一个演示账号，客户端会标注「当前为演示模式」。
+  **提审前跑一次 `python manage.py seed_demo_account --reset`** 可保证数据整洁。
+- **想确认有没有生效**：`python manage.py deploy_check` 会明确报出演示模式的状态与演示账号的活动数。
 
 
 ### 4. 部署
