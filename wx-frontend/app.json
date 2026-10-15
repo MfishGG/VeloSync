@@ -60,12 +60,6 @@
       }
     ]
   },
-  "permission": {
-    "scope.userLocation": {
-      "desc": "用于在轨迹回放时展示您的当前位置"
-    }
-  },
-  "requiredPrivateInfos": ["getLocation"],
   "__usePrivacyCheck__": true,
   "style": "v2",
   "sitemapLocation": "sitemap.json",

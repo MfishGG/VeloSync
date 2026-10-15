@@ -110,7 +110,6 @@
         polyline="{{polyline}}"
         markers="{{markers}}"
         include-points="{{includePoints}}"
-        show-location
         enable-rotate="{{false}}"
       ></map>
 
