@@ -25,12 +25,12 @@
     <text class="ident__arrow {{showId ? 'ident__arrow--up' : ''}}">›</text>
   </view>
 
-  <!-- 隐私授权提示：未同意《用户隐私保护指引》时，手机号 / 头像 / 昵称组件会被微信
+  <!-- 隐私授权提示：未同意《用户隐私保护指引》时，头像 / 昵称组件会被微信
        直接拦截（errno 104）。必须主动提示 —— 尤其 <input type="nickname"> 在未同意时
        会静默降级为普通输入框，拿不到微信昵称却没有任何报错。 -->
   <view class="alert alert--warning privacy" wx:if="{{privacyNeeded}}">
     <view class="privacy__text">
-      使用头像、昵称、手机号前，请先阅读并同意{{privacyContractName}}
+      使用头像、昵称前，请先阅读并同意{{privacyContractName}}
     </view>
     <view class="privacy__ops">
       <text class="privacy__link" bindtap="onOpenPrivacyContract">查看协议</text>
@@ -43,7 +43,7 @@
     </view>
   </view>
 
-  <!-- 资料：头像 / 昵称 / 手机号。
+  <!-- 资料：头像 / 昵称。
        微信自 2022-10-24 起收紧 getUserProfile，无法再一键拿到真实头像昵称，
        故这里按官方「头像昵称填写能力」由用户主动设置。 -->
   <view class="profile">
@@ -87,27 +87,6 @@
         bindfocus="onNicknameFocus"
       />
       <text class="profile__hint" wx:if="{{savingNickname}}">保存中…</text>
-    </view>
-
-    <!-- 手机号：仅作展示 / 联系方式，不承担登录身份 -->
-    <view class="profile__row">
-      <text class="profile__label">手机号</text>
-      <view class="profile__value grow">
-        <text wx:if="{{phoneBound}}" class="profile__phone">{{phoneMasked}}</text>
-        <text wx:else class="profile__ph-text">未绑定</text>
-      </view>
-      <!-- 与 agreePrivacyAuthorization 耦合：未同意隐私政策时，一次点击即完成
-           「同意协议 + 授权手机号」，不需要用户先处理上面的提示条 -->
-      <button
-        wx:if="{{!phoneBound}}"
-        class="profile__link"
-        open-type="getPhoneNumber|agreePrivacyAuthorization"
-        bindgetphonenumber="onGetPhone"
-        bindagreeprivacyauthorization="onAgreePrivacy"
-      >
-        {{bindingPhone ? '绑定中…' : '绑定'}}
-      </button>
-      <text wx:else class="profile__hint">仅作联系方式</text>
     </view>
 
     <view class="profile__tip">头像与昵称由你自行设置，不会自动读取微信资料</view>
@@ -171,6 +150,9 @@
   <view class="btn btn--ghost btn--block" bindtap="onLogout" style="margin-top:28rpx">
     退出登录
   </view>
+
+  <!-- 注销：不可逆，入口刻意做得低调（纯文字、无按钮样式），但不隐藏 -->
+  <view class="danger-link" bindtap="onDeleteAccount">注销账号</view>
 
   <view class="t-xs t3" style="text-align:center;margin-top:24rpx">
     VeloSync 速同 · v{{version}}

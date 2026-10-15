@@ -54,16 +54,12 @@ Page({
     wx: { connected: false },
     /** 账号信息（OpenID / UnionID）默认收起，避免普通用户看到一串乱码 */
     showId: false,
-    /** 手机号：仅作展示 / 联系方式，不承担登录身份 */
-    phoneMasked: "",
-    phoneBound: false,
     /** 资料编辑暂存态：昵称输入值 + 各操作进行中标记 */
     nicknameDraft: "",
     savingNickname: false,
     savingAvatar: false,
-    bindingPhone: false,
     avatarHint: AVATAR_HINT,
-    /** 隐私授权：未同意时手机号 / 头像 / 昵称组件会被微信拦截（errno 104） */
+    /** 隐私授权：未同意时头像 / 昵称组件会被微信拦截（errno 104） */
     privacyNeeded: false,
     privacyContractName: "",
     accountCount: 0,
@@ -91,8 +87,6 @@ Page({
       avatarUrl: user.avatar || "",
       wx,
       displayName: pickDisplayName(user, wx),
-      phoneMasked: user.phone_masked || "",
-      phoneBound: !!user.phone_bound,
       // 输入框初值。仅在用户没在编辑时覆盖，否则会打断正在输入的内容
       nicknameDraft: this.data.nicknameDraft || (user.nickname || ""),
     });
@@ -202,39 +196,6 @@ Page({
       .then(() => this.setData({ savingAvatar: false, savingNickname: false }));
   },
 
-  /**
-   * 绑定手机号。`getPhoneNumber` 回调返回**一次性 code**（基础库 2.21.2+），
-   * 由后端换明文号码 —— 前端拿不到也不需要号码本身。
-   * 注意：这个 code 只能换手机号，不能拿去 wx.login 换 openid。
-   */
-  onGetPhone(e) {
-    const detail = e.detail || {};
-    const code = detail.code || "";
-    if (!code) {
-      // 用户点了「拒绝」，或小程序主体非企业/个体户（该能力不支持个人主体）
-      const tip = detail.errMsg && detail.errMsg.indexOf("deny") >= 0
-        ? "已取消授权"
-        : "未能获取手机号，请确认小程序已完成企业认证";
-      wx.showToast({ title: tip, icon: "none" });
-      return;
-    }
-    this.setData({ bindingPhone: true });
-    api.auth
-      .bindPhone(code)
-      .then((user) => {
-        if (user) {
-          auth.setUser(user);
-          getApp().globalData.user = user;
-          this.applyUser(user);
-        }
-        wx.showToast({ title: "手机号已绑定", icon: "none" });
-      })
-      .catch((err) => {
-        wx.showToast({ title: (err && err.message) || "绑定失败", icon: "none" });
-      })
-      .then(() => this.setData({ bindingPhone: false }));
-  },
-
   // ---------------- 隐私授权（微信《用户隐私保护指引》）----------------
 
   /** 查询是否还有待用户同意的隐私政策；未同意时在资料卡上方给出提示条 */
@@ -310,5 +271,63 @@ Page({
         app.onLoggedOut();
       },
     });
+  },
+
+  // ---------------- 注销账号 ----------------
+
+  /**
+   * 注销账号。两级确认：第一级讲清不可逆的后果，第二级要求手动输入确认词。
+   *
+   * 为什么要两级：「确定要注销吗」这种单次弹窗太容易被手指惯性点掉，
+   * 而这一步会永久删除账号及全部同步任务、活动记录、平台绑定与同步日志 ——
+   * 没有回收站，也没有客服能找回。确认词与后端要求的完全一致（见
+   * `DELETE_CONFIRM_PHRASE`），前端这道只是提示，真正的校验在服务端。
+   */
+  onDeleteAccount() {
+    wx.showModal({
+      title: "注销账号",
+      content:
+        "注销后将永久删除你的账号，以及全部同步任务、活动记录、平台绑定与同步日志，" +
+        "且无法恢复。\n\n确定要继续吗？",
+      confirmText: "继续",
+      confirmColor: "#ef4444",
+      success: (r1) => {
+        if (!r1.confirm) return;
+        wx.showModal({
+          title: "最后确认",
+          content: "请输入「注销」以确认",
+          editable: true,
+          placeholderText: "注销",
+          confirmText: "确认注销",
+          confirmColor: "#ef4444",
+          success: (r2) => {
+            if (!r2.confirm) return;
+            if (String(r2.content || "").trim() !== "注销") {
+              wx.showToast({ title: "确认词不正确，已取消", icon: "none" });
+              return;
+            }
+            this.doDeleteAccount();
+          },
+        });
+      },
+    });
+  },
+
+  doDeleteAccount() {
+    wx.showLoading({ title: "正在注销…", mask: true });
+    api.auth
+      .deleteAccount("注销")
+      .then(() => {
+        wx.hideLoading();
+        auth.clear();
+        wx.showToast({ title: "账号已注销", icon: "none" });
+        // 与退出登录走同一条路径。本地态必须清干净：用户已不存在，
+        // 残留的 token 与用户资料只会换来一连串 401。
+        setTimeout(() => getApp().onLoggedOut(), 700);
+      })
+      .catch((err) => {
+        wx.hideLoading();
+        wx.showToast({ title: (err && err.message) || "注销失败，请稍后重试", icon: "none" });
+      });
   },
 });

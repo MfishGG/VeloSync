@@ -103,7 +103,7 @@
   border: none;
 }
 
-/* ---------------- 个人资料（头像 / 昵称 / 手机号） ---------------- */
+/* ---------------- 个人资料（头像 / 昵称） ---------------- */
 .profile {
   background: #fff;
   border-radius: 28rpx;
@@ -174,13 +174,7 @@
   font-size: 27rpx;
   color: var(--t1);
 }
-.profile__phone {
-  font-size: 27rpx;
-  color: var(--t1);
-  font-family: Consolas, Menlo, monospace;
-}
-.profile__ph,
-.profile__ph-text {
+.profile__ph {
   font-size: 27rpx;
   color: var(--t3);
 }
@@ -188,21 +182,6 @@
   flex-shrink: 0;
   font-size: 22rpx;
   color: var(--t3);
-}
-/* 绑定手机号：做成小胶囊链接，与 ids__copy 同一视觉语言 */
-.profile__link {
-  flex-shrink: 0;
-  margin: 0;
-  padding: 4rpx 20rpx;
-  min-width: 0;
-  line-height: 1.6;
-  font-size: 22rpx;
-  color: var(--primary);
-  background: var(--primary-soft);
-  border-radius: 999rpx;
-}
-.profile__link::after {
-  border: none;
 }
 .profile__arrow {
   flex-shrink: 0;
@@ -361,4 +340,17 @@
   font-size: 34rpx;
   color: #cbd5e1;
   line-height: 1;
+}
+
+/* 注销入口：刻意做得低调（纯文字、灰）但保留足量热区。
+   它不可撤销，不该比「退出登录」更显眼、更易误触。 */
+.danger-link {
+  margin-top: 36rpx;
+  padding: 20rpx 0;
+  text-align: center;
+  font-size: 26rpx;
+  color: var(--t3);
+}
+.danger-link:active {
+  color: var(--danger);
 }

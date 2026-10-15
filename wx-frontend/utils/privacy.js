@@ -6,9 +6,10 @@
  * 直接拦截，报 `errno 112`（未声明）/ `errno 104`（用户未同意）。
  *
  * 本项目涉及的隐私能力：
- *   - `<button open-type="getPhoneNumber">` → 手机号
  *   - `<button open-type="chooseAvatar">`   → 头像（用户选择的图片）
  *   - `<input type="nickname">`             → 微信昵称
+ *   - `wx.chooseMessageFile`                → 用户选中的文件（FIT 解析）
+ *   - `wx.setClipboardData`                 → 读取你的剪切板（官方把写入也归在这一项）
  *
  * ⚠️ 最隐蔽的一个坑：`<input type="nickname">` 在用户未同意隐私政策时**不会**触发
  * `wx.onNeedPrivacyAuthorization`，而是**静默降级为 `<input type="text">`** ——
