@@ -38,6 +38,7 @@ echo "[entrypoint] TOKEN_ENCRYPTION_KEY: $([ -n "${TOKEN_ENCRYPTION_KEY:-}" ] &&
 echo "[entrypoint] HEALTH_DETAIL_TOKEN: $([ -n "${HEALTH_DETAIL_TOKEN:-}" ] && echo '<已设置>' || echo '<未设置>')"
 echo "[entrypoint] CACHE_URL: $([ -n "${CACHE_URL:-}" ] && echo '<已设置>' || echo '<未设置，用进程内缓存>')"
 echo "[entrypoint] CELERY_BROKER_URL: ${CELERY_BROKER_URL:-<未设置，默认 redis://127.0.0.1:6379/0>}"
+echo "[entrypoint] DEMO_MODE: ${DEMO_MODE:-<未设置，默认 1 开启>}"
 echo "=============================================="
 
 # ---------- 0. 环境自检：把常见配置错误提前说清楚 ----------
@@ -143,6 +144,20 @@ else
   echo "[entrypoint][提示]   ② 数据库 '${DB_NAME:-velosync}' 还没手动创建（Django 只建表不建库）"
   echo "[entrypoint][提示]   ③ 账号密码不对，或云托管未放行该 MySQL 实例"
   echo "[entrypoint][提示] 服务仍会启动，可访问 /api/health/ 查看具体错误。"
+fi
+
+# ---------- 1.5 预置演示账号（DEMO_MODE=1 时） ----------
+# 面向提审 / 对外演示：没有它，审核员用微信登进来看到的是一个空账号。
+# 放在 entrypoint 而不是写成 README 里的一条「请记得执行」—— 靠人记住的
+# 初始化步骤迟早会被忘掉，而这里的失败表现恰好是「页面正常、只是没有数据」。
+# 只在 web 角色做（worker / beat 重复跑没有意义）；命令幂等，已有数据即返回。
+if [ "${DEMO_MODE:-1}" = "1" ] && [ "${RUN_MODE}" = "web" ] && [ "${MIGRATE_OK}" = "1" ]; then
+  echo "[entrypoint] >>> 预置演示账号（DEMO_MODE=1）..."
+  if python manage.py seed_demo_account; then
+    echo "[entrypoint] <<< 演示账号就绪（POST /api/auth/demo/ 进入）"
+  else
+    echo "[entrypoint][警告] 演示账号预置失败：/api/auth/demo/ 会返回 503（见上方报错）"
+  fi
 fi
 
 # ---------- 2. 收集静态文件（Django Admin 样式，失败不影响 API） ----------

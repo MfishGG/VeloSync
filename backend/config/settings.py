@@ -153,6 +153,9 @@ REST_FRAMEWORK = {
         # 账密登录与注册是撞库/批量注册的主要入口
         "login": os.getenv("THROTTLE_LOGIN", "10/min"),
         "register": os.getenv("THROTTLE_REGISTER", "5/hour"),
+        # 演示入口：审核员会反复进出，比撞库额度宽松；但也不能不限，
+        # 否则等于挂了个免费的 token 工厂。
+        "demo": os.getenv("THROTTLE_DEMO", "60/hour"),
         "profile": os.getenv("THROTTLE_PROFILE", "30/hour"),
         # 试运行预览/运行任务：都要查库拉数据，给个宽松但有上限的额度
         "write": os.getenv("THROTTLE_WRITE", "120/hour"),
@@ -252,6 +255,18 @@ HEALTH_DETAIL_TOKEN = os.getenv("HEALTH_DETAIL_TOKEN", "")
 
 # 单个运行的存活上限（分钟）。超过则被 reap_stale_runs 判定为僵尸并置为 error。
 PIPELINE_RUN_TIMEOUT_MINUTES = int(os.getenv("PIPELINE_RUN_TIMEOUT_MINUTES", "30"))
+
+# ---------- 演示模式 ----------
+# 面向提审 / 对外演示：entrypoint 会预置一个演示账号（活动 / 任务 / 日志齐全），
+# 并开放 `POST /api/auth/demo/` 一键进入，无需配置任何平台凭证就能走通全流程。
+#
+# 默认 **开启**。这个开关存在的意义就是「提审时进得去」，而默认关闭会让入口
+# 安静地消失 —— 那是最难排查的一类失败（页面正常、只是按钮不在）。
+# 因此改为默认开、并把状态明确报出来：`deploy_check` 会列为待办提示，
+# 不需要时设 DEMO_MODE=0 即可关闭（关闭后该接口返回 404，演示数据仍留在库里）。
+DEMO_MODE = os.getenv("DEMO_MODE", "1") == "1"
+# 演示账号用户名。接口层与数据层读同一个值，避免两处字面量悄悄对不上。
+DEMO_USERNAME = os.getenv("DEMO_USERNAME", "demo")
 
 # ---------- 第三方快捷登录（微信 / QQ / 微博）----------
 # 填入 app_id / app_secret 即走真实 OAuth2；留空时为演示（mock）模式，仍可一键登录注册体验流程。
