@@ -39,6 +39,10 @@ Page({
     /** 是否成功问过后端。false 时界面不能断言「后端未配置」，只能说「没问到」 */
     wxModeKnown: false,
 
+    /** 后端是否开放演示入口（提审 / 对外演示；DEMO_MODE=0 时为 false） */
+    demoAvailable: false,
+    demoLoading: false,
+
     // 后端接口地址（真机预览时可在登录前直接改，不至于进不去设置页）
     baseUrl: "",
     baseUrlHost: "",
@@ -68,6 +72,7 @@ Page({
       baseUrlHost: hostOf(effective),
     });
     this.loadWxMode();
+    this.loadDemoStatus();
   },
 
   onShow() {
@@ -89,6 +94,19 @@ Page({
         // 「后端未配置小程序 AppID」，而真实原因只是网络不通 / 域名没登记。
         this.setData({ providersFailed: true });
       });
+  },
+
+  /**
+   * 问后端「演示入口是否开启」。
+   *
+   * 失败一律按不可用处理：演示入口是锦上添花，连不上后端时不该在界面上多出一个
+   * 点了必然失败的按钮。真正的问题（网络不通）由 wxMode 那条提示去讲。
+   */
+  loadDemoStatus() {
+    api.auth
+      .demoStatus()
+      .then((res) => this.setData({ demoAvailable: !!(res && res.enabled) }))
+      .catch(() => this.setData({ demoAvailable: false }));
   },
 
   // ---------------- 后端接口地址（仅非正式版可用） ----------------
@@ -193,6 +211,9 @@ Page({
       api.auth
         .wxMiniProgramLogin({ code: code || "", identity, nickname: "微信用户" })
         .then((res) => {
+          // 显式清掉演示标记：上一次可能是从演示入口进来的，
+          // 残留标记会让界面一直挂着「演示模式」的提示。
+          auth.setDemo(false);
           const tip =
             res.mode === "mock" ? "已用演示身份登录" : res.created ? "微信登录成功" : "登录成功";
           this.afterLogin(res, tip);
@@ -212,5 +233,26 @@ Page({
         }
       },
     });
+  },
+
+  // ---------------- 演示模式（提审 / 对外演示） ----------------
+
+  /**
+   * 进入演示账号。
+   *
+   * 与微信登录的区别只在「怎么拿到身份」：这里直接向后端要一个预置账号的
+   * token。它不走 wx.login，因此不需要 AppID、也不需要审核员配置任何平台凭证 ——
+   * 而后端为这个账号准备了完整的活动 / 任务 / 日志，进来就是有内容的。
+   */
+  demoLogin() {
+    this.setData({ demoLoading: true, error: "" });
+    api.auth
+      .demoLogin()
+      .then((res) => {
+        auth.setDemo(true);
+        this.afterLogin(res, "已进入演示模式");
+      })
+      .catch((err) => this.handleError(err))
+      .then(() => this.setData({ demoLoading: false }));
   },
 });

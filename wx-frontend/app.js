@@ -13,6 +13,8 @@ App({
     appSubName: "速同 · 数据同步中枢",
     /** 当前登录用户 */
     user: null,
+    /** 当前登录态是否来自「演示模式」入口（提审 / 对外演示） */
+    demo: false,
     /** 冷启动时后端是否可达（登录页据此显示黄色提示） */
     backendOk: true,
   },
@@ -22,6 +24,7 @@ App({
     auth.load();
     const user = auth.getUser();
     if (user) this.globalData.user = user;
+    this.globalData.demo = auth.isDemoMode();
 
     // 恢复自定义后端地址（仅开发版/体验版的登录页可改；设置页的那个入口已移除）。
     // 加版本戳：config.js 改了 cloudBaseUrl / env 后，旧缓存要自动失效，
@@ -45,12 +48,16 @@ App({
   /** 统一的登录成功回调：写入全局态并跳转到工作台 */
   onLoggedIn(payload) {
     this.globalData.user = payload.user || null;
+    // 演示标记以后端响应为准（演示入口的响应里带 demo:true）。
+    // 不在这里推断「用户名是不是 demo」—— 那会把一个可配置的名字写死成判定条件。
+    this.globalData.demo = !!payload.demo;
     this.globalData.backendOk = true;
   },
 
   /** 退出登录：清空本地态并回到登录页 */
   onLoggedOut() {
     this.globalData.user = null;
+    this.globalData.demo = false;
     wx.reLaunch({ url: "/pages/login/login" });
   },
 });

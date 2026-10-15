@@ -54,6 +54,8 @@ Page({
     wx: { connected: false },
     /** 账号信息（OpenID / UnionID）默认收起，避免普通用户看到一串乱码 */
     showId: false,
+    /** 当前登录态是否来自「演示模式」入口（提审 / 对外演示） */
+    demo: false,
     /** 资料编辑暂存态：昵称输入值 + 各操作进行中标记 */
     nicknameDraft: "",
     savingNickname: false,
@@ -73,6 +75,7 @@ Page({
       return;
     }
     this.applyUser(auth.getUser());
+    this.setData({ demo: auth.isDemoMode() });
     this.refreshMe();
     this.loadBadges();
     this.checkPrivacy();

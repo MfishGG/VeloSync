@@ -30,6 +30,18 @@ const auth = {
   /** 查询小程序登录模式（oauth：已配置 AppID；mock：演示身份） */
   wxMiniProgramMode: () => api("/auth/wx/miniprogram/"),
 
+  /**
+   * 演示模式是否可用。后端 `DEMO_MODE=0` 时返回 `{enabled:false}` ——
+   * 前端据此决定要不要渲染入口，而不是渲染出来再让用户点了报错。
+   */
+  demoStatus: () => api("/auth/demo/"),
+
+  /**
+   * 进入演示账号（提审 / 对外演示用）。
+   * 无需微信授权、无需配置任何平台凭证；返回的 token 与正常登录完全一致。
+   */
+  demoLogin: () => api("/auth/demo/", { method: "POST" }),
+
   /** 更新昵称 / 头像（微信「头像昵称填写能力」的结果提交到这里） */
   updateProfile: (payload) => api("/auth/profile/", { method: "PATCH", data: payload }),
 

@@ -58,8 +58,21 @@
       已接入微信真实登录：点击上方按钮将唤起微信授权，昵称与头像来自你的微信账号。
     </view>
     <view class="alert alert--info" wx:elif="{{wxMode === 'mock' && wxModeKnown}}">
-      当前为演示模式（后端未配置小程序 AppID）：微信一键登录会用本机稳定的演示身份建号，
+      当前为演示身份登录（后端未配置小程序 AppID）：微信一键登录会用本机稳定的演示身份建号，
       配置 <text class="mono">WECHAT_MP_APP_ID / WECHAT_MP_APP_SECRET</text> 后自动切换为真实登录。
+    </view>
+  </view>
+
+  <!-- 演示模式：面向提审与对外演示。后端 DEMO_MODE 开启时才渲染 ——
+       它是一条真实的登录入口，不需要时不该出现在界面上。 -->
+  <view class="card stack" wx:if="{{demoAvailable}}">
+    <view class="card__title">体验演示账号</view>
+    <button class="btn btn--soft btn--block" bindtap="demoLogin" disabled="{{demoLoading}}">
+      {{demoLoading ? '进入中…' : '进入演示账号'}}
+    </button>
+    <view class="tip">
+      无需授权任何平台账号，直接进入一个预置好的演示账号：含近 30 天活动、示例同步任务与同步日志。
+      演示数据为所有访客共用，与你的真实账号完全隔离。
     </view>
   </view>
 

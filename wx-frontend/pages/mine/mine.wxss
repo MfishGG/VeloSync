@@ -71,11 +71,18 @@
   transform: rotate(90deg);
 }
 
+/* ---------------- 演示模式提示（提审 / 对外演示）---------------- */
+/* 外观复用全局 .alert--info，这里只补间距 */
+.demo-tip {
+  margin-top: 20rpx;
+}
+
 /* ---------------- 隐私授权提示 ---------------- */
 /* 外观复用全局 .alert--warning，这里只补内部排布与按钮样式 */
 .privacy {
   margin-top: 20rpx;
 }
+
 .privacy__ops {
   display: flex;
   align-items: center;
