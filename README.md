@@ -30,7 +30,7 @@
 | 🖥 三栏工作台       | 左侧导航可折叠可拖拽调宽，右侧上下文面板随选中对象切换                                                                                                                                                                     |
 | 🧩 插件化 Adapter | 平台适配器注册表：Mock 可完整跑通；iGPSPORT/Garmin/Strava/COROS 骨架，申请到凭证后实现接口即接入                                                                                                                               |
 | 🧵 异步任务        | `dispatch_run()` 显式解耦执行模型：有 Celery worker 走 Celery，没有则回退后台线程——**绝不把同步任务跑在 HTTP 请求里**（否则撞上 gunicorn `--timeout` 会被杀，记录永远停在 running）。含僵尸运行回收与 Beat 定时轮询                                    |
-| 📱 微信小程序端      | `wx-frontend/`：原生小程序（12 页 / 5 tab）。微信一键登录（`code2session`，未配 AppID 自动降级演示身份）、手机号一键绑定（`getPhoneNumber`）、真实头像昵称（微信「头像昵称填写能力」）、微信隐私授权（`requirePrivacyAuthorize`）、Canvas 2D 手绘全部图表、`map` 组件轨迹回放、`wx.chooseMessageFile` 上传 FIT、短轮询运行进度、**三级兜底**完成第三方账号绑定。注意：与 Web 端**功能对等**指核心同步流程，小程序端另有若干刻意差异（见 `wx-frontend/README.md`）             |
+| 📱 微信小程序端      | `wx-frontend/`：原生小程序（12 页 / 5 tab）。微信一键登录（`code2session`，未配 AppID 自动降级演示身份）、真实头像昵称（微信「头像昵称填写能力」）、微信隐私授权（`requirePrivacyAuthorize`）、**账号注销**（服务端级联删除 + 平台侧撤销授权）、Canvas 2D 手绘全部图表、`map` 组件轨迹回放、`wx.chooseMessageFile` 上传 FIT、短轮询运行进度、**三级兜底**完成第三方账号绑定。注意：与 Web 端**功能对等**指核心同步流程，小程序端另有若干刻意差异（见 `wx-frontend/README.md`）             |
 
 ## 🚀 快速开始
 
@@ -151,7 +151,7 @@ VeloSync/
 │   ├── .env.example
 │   ├── config/                 # settings / urls / celery
 │   └── apps/
-│       ├── accounts/           # JWT 登录注册、第三方登录、手机号/资料、微信小程序登录
+│       ├── accounts/           # JWT 登录注册、第三方登录、资料与注销、微信小程序登录
 │       ├── platforms/          # 平台/账号模型、Fernet 加密（含 client_secret）、OAuth 流程、Token 刷新、适配器
 │       ├── pipelines/          # 同步任务/节点/连线/运行记录、规格注册表、执行引擎、试运行规划、过滤器、Celery 任务、运行状态轮询
 │       ├── activities/         # 活动/同步状态/FIT 详情、去重、坐标转换、FIT 解析
