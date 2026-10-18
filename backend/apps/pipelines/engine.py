@@ -21,6 +21,19 @@ from apps.pipelines.filters import FilterRegistry
 from apps.pipelines.spec import NON_ACTIVITY_CONTENTS, content_label, source_label
 from apps.synclogs.models import SyncLog
 
+def _local_fit_bytes(activity):
+    """取导入时留下的原始 FIT 字节；没有则返回 None。
+
+    `fit_file` 是 OneToOne 反向关系，关系不存在时 Django 抛
+    RelatedObjectDoesNotExist —— 它同时继承 ObjectDoesNotExist 和 AttributeError，
+    所以 getattr 的默认值能兜住，不需要 try。
+    """
+    fit_file = getattr(activity, "fit_file", None)
+    if not fit_file or not fit_file.data:
+        return None
+    return bytes(fit_file.data)
+
+
 #: 解析 ISO 时间字符串，失败返回 None
 def _parse_dt(value):
     if not value:
@@ -543,13 +556,41 @@ class PipelineEngine:
                 self.log("info", f"「{activity.name}」在 {platform.name} 已存在（ID {existed}），按冲突策略跳过", activity=activity)
                 return
 
+        # 取原始 FIT 字节。
+        #
+        # 这里原来在 source_type == "fit" 时直接 `json.dumps(payload)` 当 FIT 上传。
+        # Mock 平台不解析文件，所以看不出问题；一到真实平台（Strava）就变成
+        # 「Invalid .FIT File Header」—— 一个完全指不回源头的错误。
+        # 现在优先取导入时留下的原始文件，拿不到就明确失败，绝不用 JSON 顶替。
+        fit_data = None
+        fit_error = ""
         if self.planner.source_type == "fit":
-            fit_data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            fit_data = _local_fit_bytes(activity)
+            if not fit_data:
+                fit_error = "该活动没有保存原始 FIT 文件（多为改动前导入的，重新导入同一文件即可补齐）"
         else:
             try:
                 fit_data = adapter.download_fit(activity.source_activity_id or activity.id)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                fit_error = str(exc)
+
+        if not fit_data:
+            if platform.code == "mock":
+                # 演示平台不解析文件，JSON 足够
                 fit_data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            else:
+                self.stats["failed"] += 1
+                if state:
+                    state.status = "failed"
+                    state.error_message = f"无法获取原始 FIT 文件：{fit_error}"[:500]
+                    state.save()
+                self.log(
+                    "error",
+                    f"同步「{activity.name}」到 {platform.name} 失败：无法获取原始 FIT 文件"
+                    + (f"（{fit_error}）" if fit_error else ""),
+                    activity=activity,
+                )
+                return
 
         try:
             remote_id = adapter.upload_fit(fit_data, name=activity.name)

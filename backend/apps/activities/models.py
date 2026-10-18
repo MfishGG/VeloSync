@@ -55,6 +55,34 @@ class ActivityFitDetail(models.Model):
         return f"FIT<{self.activity_id}> {self.file_name}"
 
 
+class ActivityFitFile(models.Model):
+    """FIT 原始字节。
+
+    单独一张表、而不是 Activity 上的 BinaryField，是因为 Activity 是所有列表页
+    （活动列表、矩阵、仪表盘统计）的查询主体：二进制字段一旦落在主表，任何
+    SELECT 都会把它带出来 —— 20MB 的 blob 乘上几十行，列表页会慢一个数量级。
+    这里用 OneToOne 挂在旁边，只有真要「把文件传到别的平台」时才取。
+
+    存原始文件而不是只存 hash，是因为 Strava 这类平台要**完整文件**自己解析：
+    给它 payload JSON 只会回 "Invalid .FIT File Header"，而用户看到的是一个
+    完全联想不到源头的解析错误。
+    """
+
+    activity = models.OneToOneField(
+        Activity, on_delete=models.CASCADE, related_name="fit_file"
+    )
+    data = models.BinaryField("原始字节")
+    size = models.PositiveIntegerField("字节数", default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "FIT 原始文件"
+        verbose_name_plural = "FIT 原始文件"
+
+    def __str__(self):
+        return f"FIT<{self.activity_id}> {self.size} bytes"
+
+
 class ActivitySyncState(models.Model):
     """活动 × 平台 的同步状态（矩阵单元格）"""
 

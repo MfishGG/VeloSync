@@ -10,6 +10,7 @@
 import hashlib
 import logging
 import random
+import time
 from abc import ABC, abstractmethod
 from datetime import timedelta
 
@@ -23,7 +24,26 @@ logger = logging.getLogger(__name__)
 
 
 class AdapterError(Exception):
+
     """平台适配器执行异常。"""
+
+
+def _json_or_none(resp):
+    """平台异常时常常返回 HTML 错误页而不是 JSON，别让 .json() 把真实错误盖掉。"""
+    try:
+        return resp.json()
+    except ValueError:
+        return None
+
+
+def _short_reason(body, resp, limit: int = 200) -> str:
+    """从响应里抠一句能放进错误提示的话。"""
+    if isinstance(body, dict):
+        msg = body.get("message") or body.get("error")
+        if msg:
+            return str(msg)[:limit]
+    text = (getattr(resp, "text", "") or "").strip().replace("\n", " ")
+    return text[:limit] or "无响应内容"
 
 
 class ContentNotSupported(NotImplementedError):
@@ -226,6 +246,10 @@ class StravaAdapter(OAuthAdapter):
     #: Strava 明确要求撤销授权时调用该端点，否则平台侧授权仍然有效
     DEAUTHORIZE_URL = "https://www.strava.com/oauth/deauthorize"
 
+    #: uploads 是异步接口：POST 只返回 upload id，解析结果要轮询 GET /uploads/{id}
+    UPLOAD_POLL_INTERVAL = 2.0
+    UPLOAD_POLL_TIMEOUT = 60.0
+
     def revoke_token(self) -> bool:
         """调用 Strava deauthorize 真正撤销授权。"""
         token = self.account.get_access_token()
@@ -241,6 +265,88 @@ class StravaAdapter(OAuthAdapter):
         if not ok:
             logger.warning("Strava deauthorize 返回 HTTP %s", resp.status_code)
         return ok
+
+    def upload_fit(self, fit_data: bytes, name: str = "") -> str:
+        """上传 FIT 到 Strava，返回 **Strava 侧的活动 ID**。
+
+        必须两步，因为 Strava 的 uploads 是异步的：
+          1. POST /uploads 拿到 upload id —— 此时活动还不存在
+          2. 轮询 GET /uploads/{id}，直到出现 activity_id 或 error
+
+        只做第一步、把 upload id 当活动 ID 返回是个很自然的错误：数字看着像，
+        但它是上传任务的编号。后续再用它去比对/引用就全都对不上。
+        """
+        self._require_config()
+        token = self.account.get_access_token()
+        base = (self.account.platform.api_base or "").rstrip("/")
+
+        filename = (name or "").strip()[:120] or "velosync-activity"
+        if not filename.lower().endswith(".fit"):
+            filename += ".fit"
+
+        data = {"data_type": "fit"}
+        if name:
+            data["name"] = name[:150]
+
+        try:
+            resp = requests.post(
+                f"{base}/uploads",
+                headers={"Authorization": f"Bearer {token}"},
+                files={"file": (filename, fit_data, "application/octet-stream")},
+                data=data,
+                timeout=(10, 120),
+            )
+        except requests.RequestException as exc:
+            raise AdapterError(f"上传到 Strava 失败（网络错误）：{exc}") from exc
+
+        body = _json_or_none(resp)
+        if resp.status_code == 403:
+            raise AdapterError(
+                "上传到 Strava 被拒绝（403）：当前授权缺少 activity:write 权限。"
+                "请到「账号管理」解绑后重新授权（授权页需勾选全部权限）"
+            )
+        if resp.status_code not in (200, 201):
+            raise AdapterError(
+                f"上传到 Strava 失败（HTTP {resp.status_code}）：{_short_reason(body, resp)}"
+            )
+        if not isinstance(body, dict) or not body.get("id"):
+            raise AdapterError(
+                f"上传到 Strava 失败：响应里没有 upload id（{_short_reason(body, resp)}）"
+            )
+
+        return self._await_upload(base, token, body["id"])
+
+    def _await_upload(self, base: str, token: str, upload_id) -> str:
+        """轮询直到 Strava 解析完成，返回活动 ID。"""
+        deadline = time.monotonic() + self.UPLOAD_POLL_TIMEOUT
+        while time.monotonic() < deadline:
+            try:
+                resp = requests.get(
+                    f"{base}/uploads/{upload_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=(5, 30),
+                )
+            except requests.RequestException as exc:
+                raise AdapterError(f"查询 Strava 上传状态失败（网络错误）：{exc}") from exc
+
+            if resp.status_code == 404:
+                raise AdapterError("Strava 找不到刚才的 upload id（可能已过期，请重试）")
+            if resp.status_code != 200:
+                raise AdapterError(f"查询 Strava 上传状态失败（HTTP {resp.status_code}）")
+
+            body = _json_or_none(resp)
+            if isinstance(body, dict):
+                if body.get("error"):
+                    raise AdapterError(f"Strava 解析 FIT 失败：{body['error']}")
+                if body.get("activity_id"):
+                    return str(body["activity_id"])
+
+            time.sleep(self.UPLOAD_POLL_INTERVAL)
+
+        raise AdapterError(
+            f"Strava 上传超时：{int(self.UPLOAD_POLL_TIMEOUT)} 秒内未完成解析。"
+            "文件可能仍在处理中，请稍后到 Strava 上确认，避免重复上传"
+        )
 
 
 class CorosAdapter(OAuthAdapter):

@@ -14,7 +14,7 @@ from apps.activities.tasks import sync_activity_to_platform
 from apps.platforms.models import Platform
 
 from .fit_utils import FitParseUnavailable, parse_fit_file
-from .models import Activity, ActivityFitDetail, ActivitySyncState
+from .models import Activity, ActivityFitDetail, ActivityFitFile, ActivitySyncState
 from .serializers import (
     ActivityFitDetailSerializer,
     ActivitySerializer,
@@ -169,6 +169,13 @@ class FitUploadView(APIView):
                 "samples": parsed.get("samples", []),
                 "track": parsed.get("track", []),
             },
+        )
+
+        # 留下原始字节：同步到 Strava 这类平台时要把整份文件交给对方自己解析。
+        # 用 update_or_create 而非 create：重新导入同一个文件（hash 相同）
+        # 会复用已有活动，这时正应该把早先没存的原始文件补齐。
+        ActivityFitFile.objects.update_or_create(
+            activity=activity, defaults={"data": data, "size": len(data)}
         )
 
         return Response(

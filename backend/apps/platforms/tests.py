@@ -4,7 +4,7 @@
 Token 从不刷新、解密的密钥可能退化成公开值、Strava 的用户 ID 被写成字典字符串。
 """
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.contrib.auth.models import User
 from django.db import connection
@@ -271,3 +271,96 @@ class PlatformUserIdTests(TestCase):
         from .views import _platform_user_id
 
         self.assertEqual(_platform_user_id({}, 42), "oauth-42")
+
+
+class _FakeResp:
+    """最小化的响应对象：只需要 status_code / json() / text。"""
+
+    def __init__(self, status_code, body=None, text=""):
+        self.status_code = status_code
+        self._body = body
+        self.text = text
+
+    def json(self):
+        if self._body is None:
+            raise ValueError("not json")
+        return self._body
+
+
+class StravaUploadTests(TestCase):
+    """Strava 的 uploads 是异步的：POST 拿 upload id，轮询才知道结果。
+
+    这里锁住的关键点是「别把 upload id 当活动 ID 返回」—— 两个都是数字，
+    看起来一样，但后者才是后续比对/引用要用的东西。
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user("rider", "rider@example.test", "pw-12345")
+        self.platform = make_platform(
+            code="strava",
+            auth_type="oauth2",
+            api_base="https://www.strava.com/api/v3",
+            authorize_url="https://example.test/oauth/authorize",
+            token_url="https://example.test/oauth/token",
+            client_id="cid",
+            client_secret="secret",
+        )
+        self.account = PlatformAccount.objects.create(
+            user=self.user, platform=self.platform, platform_user_id="12345678"
+        )
+        self.account.set_tokens("access-token")
+        self.account.token_expires_at = timezone.now() + timedelta(hours=1)
+        self.account.save()
+
+    def _adapter(self):
+        from .adapters import StravaAdapter
+
+        return StravaAdapter(self.account)
+
+    @patch("apps.platforms.adapters.requests.get")
+    @patch("apps.platforms.adapters.requests.post")
+    def test_returns_activity_id_not_upload_id(self, post, get):
+        post.return_value = _FakeResp(201, {"id": 900, "activity_id": None})
+        get.return_value = _FakeResp(200, {"id": 900, "activity_id": 555, "error": None})
+
+        self.assertEqual(self._adapter().upload_fit(b"FITBYTES", name="晨骑"), "555")
+
+    @patch("apps.platforms.adapters.requests.post")
+    def test_parse_error_is_reported(self, post):
+        from .adapters import AdapterError
+
+        post.return_value = _FakeResp(201, {"id": 901, "errors": ["bad"]})
+        with patch("apps.platforms.adapters.requests.get") as get:
+            get.return_value = _FakeResp(200, {"id": 901, "error": "Bad file format"})
+            with self.assertRaises(AdapterError) as ctx:
+                self._adapter().upload_fit(b"NOTFIT")
+        self.assertIn("解析 FIT 失败", str(ctx.exception))
+        self.assertIn("Bad file format", str(ctx.exception))
+
+    @patch("apps.platforms.adapters.requests.post")
+    def test_forbidden_points_at_missing_scope(self, post):
+        from .adapters import AdapterError
+
+        post.return_value = _FakeResp(403, {"message": "Authorization Error"})
+        with self.assertRaises(AdapterError) as ctx:
+            self._adapter().upload_fit(b"FIT")
+        self.assertIn("activity:write", str(ctx.exception))
+
+    @patch("apps.platforms.adapters.requests.post")
+    def test_html_error_page_does_not_crash(self, post):
+        from .adapters import AdapterError
+
+        post.return_value = _FakeResp(502, None, text="<html>Bad Gateway</html>")
+        with self.assertRaises(AdapterError) as ctx:
+            self._adapter().upload_fit(b"FIT")
+        self.assertIn("502", str(ctx.exception))
+
+    @patch("apps.platforms.adapters.requests.post")
+    def test_poll_timeout_is_explicit(self, post):
+        from .adapters import AdapterError
+
+        post.return_value = _FakeResp(201, {"id": 902})
+        with patch("apps.platforms.adapters.time.monotonic", side_effect=[0, 100]):
+            with self.assertRaises(AdapterError) as ctx:
+                self._adapter().upload_fit(b"FIT")
+        self.assertIn("超时", str(ctx.exception))

@@ -11,7 +11,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.activities.models import Activity, ActivitySyncState
+from apps.activities.models import Activity, ActivityFitFile, ActivitySyncState
 from apps.platforms.adapters import AdapterError, MockAdapter
 from apps.platforms.models import Platform, PlatformAccount
 from apps.platforms.testing import make_platform
@@ -229,3 +229,62 @@ class EngineTests(BaseFixtures):
         self.assertEqual(entry["status"], "skipped")
         self.assertEqual(engine.stats["skipped"], 1)
         self.assertEqual(engine.stats["failed"], 0)
+
+
+class FitUploadSourceTests(BaseFixtures):
+    """FIT 源上传到真实平台时，必须交出**原始文件**。
+
+    这里锁住的是一个很容易「看起来正常」的错误：引擎曾在 source_type == "fit"
+    时直接 `json.dumps(payload)` 当 FIT 上传。Mock 平台不解析文件，所以一路
+    绿灯；换成 Strava 就变成 "Invalid .FIT File Header" —— 一个完全指不回源头
+    的错误，用户只会以为自己导入的文件坏了。
+    """
+
+    def _prepare(self, code):
+        platform = make_platform(
+            code, name="Strava", auth_type="oauth2", api_base="https://api.test"
+        )
+        account = PlatformAccount.objects.create(
+            user=self.user, platform=platform, platform_user_id="1"
+        )
+        pipeline = self.make_pipeline(source_type="fit", sync_content=["activity"])
+        engine = PipelineEngine(pipeline, PipelineRun.objects.create(pipeline=pipeline))
+        return account, platform, engine
+
+    def test_original_bytes_are_passed_through(self):
+        account, platform, engine = self._prepare("strava-a")
+        activity = self.make_activity()
+        ActivityFitFile.objects.create(activity=activity, data=b"REAL-FIT-BYTES", size=14)
+
+        sent = {}
+
+        class _Adapter:
+            def check_exists(self, ts):
+                return None
+
+            def upload_fit(self, fit_data, name=""):
+                sent["data"] = fit_data
+                return "remote-1"
+
+        engine._sync_activity(activity, account, platform, _Adapter(), False)
+        self.assertEqual(sent["data"], b"REAL-FIT-BYTES")
+        self.assertEqual(engine.stats["uploaded"], 1)
+
+    def test_missing_file_fails_instead_of_sending_json(self):
+        account, platform, engine = self._prepare("strava-b")
+        activity = self.make_activity()  # 没有 ActivityFitFile
+
+        class _Adapter:
+            called = False
+
+            def check_exists(self, ts):
+                return None
+
+            def upload_fit(self, fit_data, name=""):
+                _Adapter.called = True
+                return "remote-2"
+
+        engine._sync_activity(activity, account, platform, _Adapter(), False)
+
+        self.assertFalse(_Adapter.called, "没有原始文件时不该向真实平台上传任何东西")
+        self.assertEqual(engine.stats["failed"], 1)
