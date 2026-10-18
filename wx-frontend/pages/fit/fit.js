@@ -173,6 +173,32 @@ Page({
         "1) 把 .fit 文件发送到「文件传输助手」或任意会话；\n" +
         "2) 回到本页点「选择 FIT 文件」；\n" +
         "3) 在聊天记录里选中该文件即可上传解析。",
+      cancelText: "佳明怎么导出",
+      confirmText: "知道了",
+      success: (r) => {
+        if (r.cancel) this.showGarminGuide();
+      },
+    });
+  },
+
+  /**
+   * 佳明导出说明。
+   *
+   * 必须区分中国区 / 国际区：Garmin 两套账号体系完全独立、数据不互通
+   * （官方 FAQ：两服务器账号无法跨服务器访问）。去错站点的人会找不到自己的活动，
+   * 而界面上的表现只是「我没有这条记录」，很难自己想到是站点点错了。
+   */
+  showGarminGuide() {
+    wx.showModal({
+      title: "从佳明导出 FIT",
+      content:
+        "第一步：确认账号属于哪个区（两区数据不互通）\n" +
+        "· 中国区：connect.garmin.cn\n" +
+        "· 国际区：connect.garmin.com\n\n" +
+        "第二步：用浏览器登录对应区网页版\n" +
+        "· 单条：打开活动 → 找「导出 / Export」→ 选原始文件\n" +
+        "· 批量：账号设置 → 数据管理 → 导出全部数据\n\n" +
+        "第三步：把导出的 .fit 文件发到微信，即可在本页导入。",
       showCancel: false,
       confirmText: "知道了",
     });

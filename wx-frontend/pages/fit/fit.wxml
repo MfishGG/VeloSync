@@ -11,7 +11,7 @@
     <view class="upload__icon">↥</view>
     <view class="upload__title">{{uploading ? '解析中…' : '选择 FIT 文件'}}</view>
     <view class="upload__desc">从聊天记录中选择 .fit 文件</view>
-    <view class="upload__hint" catchtap="goGuide">不知道怎么导入？点这里看步骤</view>
+    <view class="upload__hint" catchtap="goGuide">不知道怎么导入？点这里看步骤（含佳明导出方法）</view>
   </view>
 
   <view class="alert alert--danger" wx:if="{{error}}">{{error}}</view>
