@@ -72,8 +72,17 @@ class ActivityViewSet(
 
         DELETE /api/activities/{id}/fit/ —— 删除解析详情
         带 ?with_activity=1 时连活动记录一并删除（同步矩阵中的行也会消失）。
+
+        路径里的 id 是**活动**主键。前端一度把 FIT 解析详情的 id 传进来 ——
+        两者不等时只会得到一个 DRF 的「未找到。」，完全看不出是 id 拿错了，
+        所以这里把 404 写清楚。
         """
-        activity = self.get_object()
+        activity = Activity.objects.filter(pk=pk, user=request.user).first()
+        if activity is None:
+            return Response(
+                {"detail": f"活动 {pk} 不存在或不属于当前用户（注意这里要传活动 id）"},
+                status=404,
+            )
 
         if request.method.lower() == "delete":
             with_activity = request.query_params.get("with_activity", "") in ("1", "true", "True")

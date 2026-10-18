@@ -125,6 +125,10 @@ Page({
   /** 删除：两次确认，第二次可选择是否连活动一起删 */
   onDelete(e) {
     const { id, name, activityId } = e.currentTarget.dataset;
+    // 删除接口是 /activities/{activity_id}/fit/ —— 路径里要的是**活动** id。
+    // 而列表每行的主键（item.id）是 FIT 解析详情的 id，两者不一定相等：
+    // 只有恰好同号时才碰巧删得掉，这就是「有时能删、多数时候删不掉」的来源。
+    const target = activityId || id;
     wx.showModal({
       title: "删除 FIT 解析记录",
       content: `确定删除「${name}」的解析结果？\n删除后曲线、轨迹与指标数据将不可恢复。`,
@@ -139,17 +143,17 @@ Page({
           cancelText: "仅删解析",
           confirmColor: "#ef4444",
           success: (r2) => {
-            this.doDelete(id, r2.confirm, activityId);
+            this.doDelete(target, r2.confirm);
           },
         });
       },
     });
   },
 
-  doDelete(id, withActivity) {
+  doDelete(activityId, withActivity) {
     wx.showLoading({ title: "删除中…", mask: true });
     api.activities
-      .deleteFit(id, withActivity)
+      .deleteFit(activityId, withActivity)
       .then(() => {
         wx.hideLoading();
         wx.showToast({ title: "已删除", icon: "success" });
