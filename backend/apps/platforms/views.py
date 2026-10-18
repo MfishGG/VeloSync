@@ -38,7 +38,21 @@ def _redirect_uri(request, code: str) -> str:
     """
     path = f"/api/accounts/{code}/callback/"
     base = getattr(settings, "PLATFORM_REDIRECT_BASE_URL", "").rstrip("/")
-    return f"{base}{path}" if base else request.build_absolute_uri(path)
+    if base:
+        return f"{base}{path}"
+
+    # 没固定 base 时只能从请求头推导。走 callContainer 的请求（小程序正式环境）
+    # 拿到的 Host 是容器内部名 / IP，推导出来是 `https://django-xu8d/...` 这类
+    # 平台侧必然拒绝的地址 —— 对方只会回一句 redirect_uri invalid，从我们这边
+    # 完全看不出是自己少配了一个环境变量。所以先把自己的日志说清楚。
+    resolved = request.build_absolute_uri(path)
+    if request.headers.get("X-WX-SERVICE"):
+        logger.error(
+            "callContainer 请求缺少 PLATFORM_REDIRECT_BASE_URL：OAuth 回调会被推导成"
+            "内部地址 %s，平台将拒绝该 redirect_uri",
+            resolved,
+        )
+    return resolved
 
 
 class PlatformViewSet(viewsets.ReadOnlyModelViewSet):

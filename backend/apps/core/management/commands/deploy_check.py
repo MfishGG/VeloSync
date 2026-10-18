@@ -15,6 +15,7 @@ from django.core.management.base import BaseCommand
 from django.db import connection
 
 from apps.platforms.crypto import key_source
+from apps.platforms.models import Platform
 
 #: 仓库里公开的默认值，出现即等于没有配置
 DEFAULT_SECRET = "dev-insecure-secret-key-change-me"
@@ -162,6 +163,38 @@ class Command(BaseCommand):
             results.append((OK, "FRONTEND_URL", frontend))
         else:
             results.append((WARN, "FRONTEND_URL", f"{frontend}（非 https，OAuth 回调会退到 http）"))
+
+        # ---- OAuth 回调地址 ----
+        # 小程序正式环境走 callContainer，请求 Host 是容器内部名 / IP，
+        # build_absolute_uri() 推导出 `https://django-xu8d/...` 这类地址，平台侧
+        # 必然拒绝（Strava 直接回 {"field":"redirect_uri","code":"invalid"}）。
+        # 只有在真的有平台配了凭证时才提示 —— 纯演示环境不必纠结这一项。
+        redirect_base = getattr(settings, "PLATFORM_REDIRECT_BASE_URL", "").rstrip("/")
+        try:
+            oauth_count = (
+                Platform.objects.filter(is_active=True).exclude(auth_type="mock").count()
+            )
+        except Exception:  # 数据库还没就绪时不让自检自己挂掉
+            oauth_count = 0
+
+        if redirect_base:
+            results.append(
+                (
+                    OK,
+                    "PLATFORM_REDIRECT_BASE_URL",
+                    f"{redirect_base}/api/accounts/<code>/callback/",
+                )
+            )
+        elif oauth_count:
+            results.append(
+                (
+                    FAIL,
+                    "PLATFORM_REDIRECT_BASE_URL",
+                    f"有 {oauth_count} 个真实平台，但回调地址未固定 —— 小程序走 "
+                    "callContainer 时 Host 是容器内部名，推导出的 redirect_uri 会被"
+                    "平台拒绝。请填公网 https 域名，如 https://xxx.sh.run.tcloudbase.com",
+                )
+            )
 
         # ---- 数据库连通与版本 ----
         try:
