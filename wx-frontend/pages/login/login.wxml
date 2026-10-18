@@ -50,9 +50,8 @@
     </view>
 
     <view class="alert alert--warning" wx:if="{{providersFailed}}">
-      未连接到后端（{{baseUrlHost}}），暂时无法判断登录模式。
+      {{providersFailText}}
       <text class="t-primary" wx:if="{{isDev}}" bindtap="editBase">修改接口地址</text>
-      <text wx:else>请检查网络后重试。</text>
     </view>
     <view class="alert alert--success" wx:elif="{{wxMode === 'oauth'}}">
       已接入微信真实登录：点击上方按钮将唤起微信授权，昵称与头像来自你的微信账号。

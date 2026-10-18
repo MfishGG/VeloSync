@@ -34,6 +34,8 @@ Page({
     loading: false,
     error: "",
     providersFailed: false,
+    /** 探测失败的原因文案：域名未登记与断网要分开说，否则排查方向会跑偏 */
+    providersFailText: "",
 
     wxMode: "mock",
     /** 是否成功问过后端。false 时界面不能断言「后端未配置」，只能说「没问到」 */
@@ -88,11 +90,22 @@ Page({
       .then((res) => {
         if (res && res.mode) this.setData({ wxMode: res.mode, wxModeKnown: true });
       })
-      .catch(() => {
+      .catch((err) => {
         // 连不上后端时给出提示（登录按钮仍可点，会以真实错误信息反馈）。
         // 注意：这里必须把 wxModeKnown 保持为 false —— 否则界面会误报
         // 「后端未配置小程序 AppID」，而真实原因只是网络不通 / 域名没登记。
-        this.setData({ providersFailed: true });
+        const msg = (err && err.message) || "";
+        const notInDomain = /domain list/i.test(msg);
+        // 正式版只说「网络失败」：域名、服务器域名配置这类词对终端用户没有意义，
+        // 也不该把后端域名印在界面上。
+        this.setData({
+          providersFailed: true,
+          providersFailText: this.data.isDev
+            ? notInDomain
+              ? `当前后端域名未加入小程序的「request 合法域名」：请在微信公众平台 → 开发管理 → 开发设置 → 服务器域名 中配置 ${this.data.baseUrlHost}。`
+              : `未连接到后端（${this.data.baseUrlHost}），暂时无法判断登录模式。`
+            : "网络连接失败，请检查网络后重试。",
+        });
       });
   },
 
@@ -194,12 +207,32 @@ Page({
 
   handleError(err) {
     const msg = (err && err.message) || "操作失败";
-    const offline = err && err.status === 0;
-    this.setData({
-      error: offline
-        ? `无法连接后端（${this.data.baseUrlHost}）：请确认地址正确、后端已启动、手机与电脑处于同一网络`
-        : msg,
-    });
+    if (!(err && err.status === 0)) {
+      this.setData({ error: msg });
+      return;
+    }
+
+    /* 网络层失败（status 0）有两种成因，外观一模一样，但排查方向完全相反：
+     *   1) 域名没登记进「request 合法域名」—— 开发者工具勾了「不校验合法域名」时
+     *      一切正常，一到真机 / 正式版就全挂。最容易被误判成「后端挂了」；
+     *   2) 真的连不上（断网、服务停、地址错）。
+     * 只能靠 errMsg 区分：前者带 "url not in domain list"。
+     */
+    const notInDomain = /domain list/i.test(msg);
+    const dev = this.data.isDev;
+    let text;
+    if (notInDomain) {
+      // 这是一条配置问题，不是网络问题。正式版里不该对终端用户解释「服务器域名」，
+      // 但开发 / 体验版必须说清楚，否则下一个人还会去查后端日志。
+      text = dev
+        ? `后端域名未登记为「request 合法域名」：请在微信公众平台 → 开发管理 → 开发设置 → 服务器域名，把 ${this.data.baseUrlHost} 加入 request 合法域名。`
+        : "网络连接失败，请稍后重试";
+    } else {
+      text = dev
+        ? `无法连接后端（${this.data.baseUrlHost}）：${msg}`
+        : "网络连接失败，请检查网络后重试";
+    }
+    this.setData({ error: text });
   },
 
   // ---------------- 微信一键登录（唯一登录方式） ----------------

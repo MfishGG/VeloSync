@@ -104,12 +104,9 @@ async function api(path, options) {
   try {
     res = await send();
   } catch (err) {
-    // 网络不可达：交给调用方展示「无法连接后端」
-    throw new ApiError(
-      (err && err.errMsg) || "无法连接后端服务，请确认 Django 已启动",
-      0,
-      null,
-    );
+    // 网络不可达。保留原始 errMsg —— 它是区分「域名未登记」与「真的断网」的唯一线索，
+    // 在 handleError 里按 "url not in domain list" 分流。
+    throw new ApiError((err && err.errMsg) || "网络请求失败", 0, null);
   }
 
   if (res.statusCode === 401 && auth.getRefresh()) {
