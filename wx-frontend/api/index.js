@@ -110,7 +110,8 @@ const activities = {
   fitHistory: () => api("/activities/fit-history/"),
 
   /** 上传 FIT 文件（filePath 为 wx.chooseMessageFile 得到的临时路径） */
-  uploadFit: (filePath) => upload("/activities/upload-fit/", filePath, "file"),
+  uploadFit: (filePath, fileName) =>
+    upload("/activities/upload-fit/", filePath, "file", {}, fileName),
 };
 
 // ---------------- 日志与统计 ----------------

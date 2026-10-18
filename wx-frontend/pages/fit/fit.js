@@ -83,7 +83,7 @@ Page({
     this.setData({ uploading: true });
     wx.showLoading({ title: "解析中…", mask: true });
     api.activities
-      .uploadFit(filePath)
+      .uploadFit(filePath, name)
       .then((res) => {
         wx.hideLoading();
         this.setData({ uploading: false });

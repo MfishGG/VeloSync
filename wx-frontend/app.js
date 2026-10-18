@@ -2,6 +2,7 @@ const auth = require("./utils/auth");
 const request = require("./utils/request");
 const config = require("./config");
 const env = require("./utils/env");
+const cloudrun = require("./utils/cloudrun");
 
 /** 后端地址缓存的键与「配置版本戳」键 */
 const BASE_URL_KEY = "velosync_base_url";
@@ -20,6 +21,18 @@ App({
   },
 
   onLaunch() {
+    // 云托管内网通道：callContainer 需要先 init 才能用。
+    // 参数没填时整段跳过 —— 请求层会自动回退到公网 wx.request（本地联调照常）。
+    // 正式环境必须填 utils/cloudrun.js 的 env / service，否则真机会因缺少
+    // request 合法域名而全部失败（云托管默认域名官方不允许用于正式环境）。
+    if (cloudrun.env && wx.cloud && typeof wx.cloud.init === "function") {
+      try {
+        wx.cloud.init({ env: cloudrun.env, traceUser: false });
+      } catch (e) {
+        console.warn("[cloud] init 失败，请求将回退公网通道", e);
+      }
+    }
+
     // 恢复本地登录态
     auth.load();
     const user = auth.getUser();

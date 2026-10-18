@@ -2,7 +2,12 @@
 
 把 Django 后端部署到**微信云托管**，让小程序端可以正式访问（走 HTTPS，无需本地 dev server）。
 
-云托管本质是「给你一个跑 Docker 容器的托管环境」，并自动分配 HTTPS 域名。部署完成后你把该域名登记到小程序后台的「request 合法域名」，真机就能访问了。
+云托管本质是「给你一个跑 Docker 容器的托管环境」，并自动分配 HTTPS 域名。
+
+⚠️ 这个默认域名**只能用于接口自测**。小程序正式环境用不了它 —— 官方明确
+「默认公网域名仅能支持接口测试使用，请勿用于正式生产环境」，小程序后台也会拒绝把它
+登记为 request 合法域名。小程序走的是 `wx.cloud.callContainer` 专用通道，
+不需要域名、不需要备案，见**第 7 节**。
 
 ---
 
@@ -42,8 +47,8 @@
 | Dockerfile 路径 | `Dockerfile` |
 | 端口 | `80` |
 
-保存后重新部署即可。**域名不会变**（域名绑定在服务上，与代码源无关），
-所以之前拿到的 `https://xxx.sh.run.tcloudbase.com` 可以继续用。
+保存后重新部署即可。**域名不会变**（域名绑定在服务上，与代码源无关）。
+它可用于接口自测与 Web 工作台；小程序正式环境走 callContainer（第 7 节），不用它。
 
 > 若不想改现有服务，也可以直接新建一个服务、选「代码仓库」而非模板。
 
@@ -240,31 +245,49 @@ curl https://<你的云托管域名>/api/health/
    全部打印出来，对照上表核对。
 4. 容器起来了但接口 503 → 访问 `/api/health/`，按 `hint` 修。
 
-### 7. 小程序端对接
+### 7. 小程序端对接（走 callContainer，不需要域名）
 
-本项目的小程序用的是**普通 HTTPS 请求**（`utils/request.js` 里的 `wx.request`），
-因此走的是「登记合法域名」这条路，**不需要** `wx.cloud.callContainer`。
+⚠️ 先记住一条：**云托管默认域名不能用于小程序正式环境**。
+把它填进「request 合法域名」会被微信直接拒绝：
 
-> 云托管控制台会展示一段 `wx.cloud.callContainer({ config: { env }, ... })` 示例代码，
-> 那是「免域名内网调用」的另一种方式，用它可以不配域名，但**需要改造所有请求代码**、
-> 且必须在 `app.json` 中声明 `cloud: true`。本项目**不用它**，忽略该示例即可。
+> 云托管域名仅用作测试使用，不可用在正式环境下，请修改。
+
+默认域名是给接口自测和 Web 工作台用的。小程序 / 公众号调云托管有专用通道
+`wx.cloud.callContainer`：走微信内部链路，**不需要域名、不需要备案、不需要在
+后台配「服务器域名」**。本项目已接入 —— `utils/request.js` 优先走它，参数缺失时
+自动回退到公网的 `wx.request`（本地联调照常，但真机会失败）。
 
 对接步骤：
 
-1. 记下云托管分配的域名，形如 `velosync-api-xxx.ap-shanghai.run.tcloudbase.com`。
-   在服务详情的「域名地址」处可看到（本项目那个是 `django-xu8d-...` 之类）。
-2. 小程序后台 → **开发管理 → 开发设置 → 服务器域名 → request 合法域名**，添加：
-   ```
-   https://<你的云托管域名>
-   ```
-   ⚠️ 必须是 `https://` 开头、**不带路径**、**不带端口**。
-3. 改小程序配置 `wx-frontend/config.js`：
-   ```js
-   baseUrl: "https://<你的云托管域名>/api",
-   ```
-4. 开发者工具重新编译 → 真机预览即可。
+1. 云托管控制台复制两个值：
 
-> 云托管默认提供 HTTPS，无需自己申请证书，正好满足小程序「必须 HTTPS」的要求。
+   | 值 | 在哪 |
+   |---|---|
+   | **环境 ID**（形如 `prod-xxxxxxxx`） | 选中环境 → 「设置」页 |
+   | **服务名称**（如 `velosync-api`） | 「服务管理 → 服务列表」的名称，**不是**域名里那串随机字符 |
+
+2. 填进 `wx-frontend/utils/cloudrun.js`：
+
+   ```js
+   module.exports = {
+     env: "prod-xxxxxxxx",
+     service: "velosync-api",
+   };
+   ```
+
+3. 小程序后台 → **设置 → 功能设置 → 基础库最低版本设置**，设为 **2.23.0** 及以上。
+   低于这个版本 `wx.cloud.callContainer` 不存在，请求会静默回退到公网并失败 ——
+   这是最容易漏的一步：开发者工具里基础库通常是最新的，本地看不出问题。
+
+4. 开发者工具重新编译 → 真机预览。
+
+> **Web 工作台怎么办**：浏览器没有 callContainer，仍用公网域名
+> （`config.js` 的 `CLOUD_BASE_URL`）。默认域名能访问，只是官方不承诺 SLA；
+> 长期建议绑定一个已备案的自定义域名 —— 那需要 ICP 备案，而云托管本身不提供备案服务。
+>
+> **FIT 上传**：`wx.uploadFile` 没有 callContainer 版本，`utils/request.js` 里
+> 按 RFC 7578 手工拼了 multipart 报文，后端接口无需改动（仍读 `request.FILES["file"]`）。
+> 注意云托管对 callContainer 的超时硬上限是 **15 秒**，超大 FIT 文件可能不够用。
 
 ---
 
@@ -378,7 +401,13 @@ CREATE DATABASE IF NOT EXISTS velosync
 > 本项目**不走这条路**。
 
 **Q：小程序报「不在以下 request 合法域名列表中」？**
-说明第 7 步的域名没登记，或登记后未重新编译。注意域名必须 `https://` 开头、不带路径。
+两种可能，按顺序排查：
+
+1. **请求回退到了公网通道** —— `utils/cloudrun.js` 的 `env` / `service` 没填，
+   或小程序基础库低于 2.23.0（此时 `wx.cloud.callContainer` 不存在）。
+   看控制台走的是 `/api/...` 公网请求还是容器调用即可确认。
+2. **填的是云托管默认域名** —— 微信明确拒绝：`云托管域名仅用作测试使用，
+   不可用在正式环境下`。这条路走不通，必须用 callContainer 或绑定已备案的自定义域名。
 
 **Q：`MySQL server has gone away`？**
 已在 `settings.py` 开启 `CONN_MAX_AGE=60` + `CONN_HEALTH_CHECKS=True` 缓解。若仍频繁出现，把 `DB_CONN_MAX_AGE` 调小（如 `0`，即每次请求新建连接）。

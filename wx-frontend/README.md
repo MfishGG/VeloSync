@@ -157,9 +157,9 @@ New-NetFirewallRule -DisplayName "VeloSync Dev 8000" -Direction Inbound -Protoco
 | --- | --- | --- |
 | 开发者工具模拟器 | `http://127.0.0.1:8000/api` | 勾选「不校验合法域名」 |
 | 真机预览 | `http://192.168.31.254:8000/api` | 后端跑 `0.0.0.0:8000`；防火墙放行 8000；手机端点「打开调试」；与电脑同一 WiFi |
-| 正式发布 | `https://api.你的域名/api` | 必须 HTTPS；域名在「开发管理 → 开发设置 → 服务器域名 → request 合法域名」登记 |
+| 正式发布 | `config.js` 的 `baseUrl` 保持默认即可 | 走 `wx.cloud.callContainer`：在 `utils/cloudrun.js` 填 `env` / `service`，后台「基础库最低版本」≥ 2.23.0（**不需要**配域名，云托管默认域名也不能用） |
 
-> **定位权限**：地图组件带 `show-location`（显示「我的位置」蓝点），需要 `scope.userLocation` 授权，因此 `app.json` 声明了 `requiredPrivateInfos: ["getLocation"]`。若小程序后台未配置「用户隐私保护指引」，蓝点可能不显示 —— **不影响轨迹回放**（polyline / markers / include-points 都不依赖定位）。
+> **不使用定位**：早先 `app.json` 曾声明 `requiredPrivateInfos: ["getLocation"]`、地图组件曾挂 `show-location`，代码却从未调用过任何定位接口。已整体移除 —— 轨迹回放只渲染 FIT 文件里的 polyline，不需要设备定位。
 
 ### 5. 不装开发者工具，先看界面长什么样
 
@@ -332,8 +332,10 @@ node tools/make_preview.js
 
 ### 7.4 正式发布还要有
 
-- 已备案的 **HTTPS 域名**（`request 合法域名`，微信要求 ICP 备案）
-- 小程序的 **类目**（工具类）与 **隐私协议**（涉及定位 `getLocation`，需在公众平台「用户隐私保护指引」中声明）
+- 云托管 **环境 ID** 与 **服务名称**（填 `utils/cloudrun.js`）—— 小程序走 `callContainer`，
+  不需要域名、不需要备案；云托管默认域名官方禁止用于正式环境
+- 小程序后台「**基础库最低版本**」≥ **2.23.0**（callContainer 的最低要求）
+- 小程序的 **类目**（工具类）与 **隐私协议**（昵称头像、用户选中的文件；本项目不使用定位）
 
 ---
 
