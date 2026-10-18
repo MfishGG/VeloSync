@@ -5,11 +5,14 @@ Token 从不刷新、解密的密钥可能退化成公开值、Strava 的用户 
 """
 from datetime import timedelta
 from unittest.mock import Mock, patch
+from urllib.parse import parse_qs, urlparse
 
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.db import connection
 from django.test import TestCase, override_settings
 from django.utils import timezone
+from rest_framework.test import APIClient
 
 from .crypto import (
     CURRENT_KEY_VERSION,
@@ -364,3 +367,91 @@ class StravaUploadTests(TestCase):
             with self.assertRaises(AdapterError) as ctx:
                 self._adapter().upload_fit(b"FIT")
         self.assertIn("超时", str(ctx.exception))
+
+
+class PkceFlowTests(TestCase):
+    """Garmin 强制 PKCE：授权要带 code_challenge，换 token 要带 code_verifier。
+
+    这两半必须成对 —— 只改一半的表现是「授权页正常，回调时报 invalid_grant」，
+    而 invalid_grant 通常被当成「授权码过期」，排查方向直接跑偏。
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user("pkce", "pkce@example.test", "pw-12345")
+        self.platform = make_platform(
+            code="garmin",
+            auth_type="oauth2",
+            requires_pkce=True,
+            authorize_url="https://connect.garmin.com/oauth2Confirm",
+            token_url="https://diauth.garmin.com/di-oauth2-service/oauth/token",
+            api_base="https://apis.garmin.com/wellness-api/rest",
+            client_id="cid",
+            client_secret="secret",
+            scopes=["ACTIVITY_EXPORT"],
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def _start_auth(self, code="garmin"):
+        resp = self.client.get(f"/api/accounts/{code}/authorize/")
+        self.assertEqual(resp.status_code, 200, resp.content[:200])
+        url = resp.json()["authorize_url"]
+        return parse_qs(urlparse(url).query)
+
+    def test_authorize_includes_s256_challenge(self):
+        q = self._start_auth()
+        self.assertEqual(q["code_challenge_method"][0], "S256")
+        challenge = q["code_challenge"][0]
+        # RFC 7636 的 base64url(sha256(...)) 是 43 个字符且无 padding
+        self.assertEqual(len(challenge), 43)
+        self.assertNotIn("=", challenge)
+
+    def test_callback_sends_matching_verifier(self):
+        from .views import _code_challenge
+
+        q = self._start_auth()
+        with patch("apps.platforms.views.post_json") as post_json:
+            post_json.return_value = {
+                "access_token": "at",
+                "refresh_token": "rt",
+                "expires_in": 3600,
+                "user_id": "garmin-user",
+            }
+            resp = self.client.get(
+                f"/api/accounts/garmin/callback/?code=auth-code&state={q['state'][0]}"
+            )
+        self.assertEqual(resp.status_code, 302)
+
+        payload = post_json.call_args[0][1]
+        # 用同一算法复算，必须与发起授权时给出的 challenge 完全一致
+        self.assertEqual(_code_challenge(payload["code_verifier"]), q["code_challenge"][0])
+
+    def test_missing_verifier_is_reported_not_swallowed(self):
+        from django.core import signing
+
+        from .views import _PKCE_KEY
+
+        q = self._start_auth()
+        nonce = signing.loads(q["state"][0])["nonce"]
+        cache.delete(_PKCE_KEY.format(nonce))  # 模拟缓存过期 / 被清
+
+        resp = self.client.get(
+            f"/api/accounts/garmin/callback/?code=auth-code&state={q['state'][0]}"
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("PKCE", resp["Location"])
+
+    def test_platform_without_pkce_has_no_challenge(self):
+        make_platform(
+            code="strava",
+            auth_type="oauth2",
+            requires_pkce=False,
+            authorize_url="https://www.strava.com/oauth/authorize",
+            token_url="https://www.strava.com/oauth/token",
+            api_base="https://www.strava.com/api/v3",
+            client_id="cid",
+            client_secret="secret",
+        )
+        q = self._start_auth("strava")
+        self.assertNotIn("code_challenge", q)
+        self.assertNotIn("code_challenge_method", q)

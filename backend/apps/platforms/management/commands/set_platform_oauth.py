@@ -26,7 +26,7 @@ from apps.platforms.models import Platform
 #: 各平台开放平台申请入口（仅作提示，凭证需自行申请）
 DOCS = {
     "igpsport": "iGPSPORT APP Open Platform —— www.igpsport.com/support/app/openapi（OAuth2.0，邮件申请 global@igpsport.com）",
-    "garmin": "Garmin Connect Developer Program —— developer.garmin.com",
+    "garmin": "Garmin Connect Developer Program —— developer.garmin.com/gc-developer-program（需提交申请审核，非自助；OAuth 2.0 强制 PKCE）",
     "strava": "Strava API Settings —— www.strava.com/settings/api",
     "coros": "COROS 开放平台 —— open.coros.com",
 }
@@ -46,6 +46,16 @@ class Command(BaseCommand):
         parser.add_argument("--client-id", dest="client_id")
         parser.add_argument("--client-secret", dest="client_secret")
         parser.add_argument("--scopes", help="逗号分隔，如 read,activity:write")
+        parser.add_argument(
+            "--pkce",
+            dest="pkce",
+            action="store_true",
+            default=None,
+            help="该平台强制 PKCE（Garmin 的 OAuth 2.0 规范要求）",
+        )
+        parser.add_argument(
+            "--no-pkce", dest="pkce", action="store_false", help="关闭 PKCE"
+        )
         parser.add_argument("--clear", action="store_true", help="清空该平台的凭证字段")
 
     def handle(self, *args, **options):
@@ -75,6 +85,11 @@ class Command(BaseCommand):
         if options["scopes"]:
             platform.scopes = [s.strip() for s in options["scopes"].split(",") if s.strip()]
             changed.append("scopes")
+        # PKCE 是平台特性而不是凭证：--clear 时不动它，免得清一次凭证就把
+        # Garmin 的开关也关掉，下次授权又报缺 code_challenge
+        if options.get("pkce") is not None:
+            platform.requires_pkce = options["pkce"]
+            changed.append("requires_pkce")
 
         if not changed:
             raise CommandError("没有要写入的字段。可用参数见 python manage.py set_platform_oauth --help")
@@ -98,7 +113,7 @@ class Command(BaseCommand):
                 state = f"已配置（client_id={p.client_id[:12]}…）" if p.client_id else "已配置"
             else:
                 state = "未配置：" + "、".join(p.oauth_missing)
-            self.stdout.write(f"[{p.code}] {p.name} · {state}")
+            self.stdout.write(f"[{p.code}] {p.name} · {state}" + (" · PKCE" if p.requires_pkce else ""))
             if p.code in DOCS and not p.oauth_ready:
                 self.stdout.write(f"    申请入口：{DOCS[p.code]}")
         self.stdout.write("")

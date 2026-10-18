@@ -20,11 +20,13 @@ class PlatformAdmin(admin.ModelAdmin):
                     "client_id",
                     "client_secret",
                     "scopes",
+                    "requires_pkce",
                 ),
                 "description": (
                     "auth_type=mock 的平台无需填写。凭证齐备（authorize_url / token_url / client_id）"
                     "后，「账号管理」页的绑定按钮才会跳转真实授权页。"
                     "也可以用命令批量填写：python manage.py set_platform_oauth <code> ..."
+                    "「强制 PKCE」给 Garmin 这类要求 code_challenge 的平台打开。"
                 ),
             },
         ),

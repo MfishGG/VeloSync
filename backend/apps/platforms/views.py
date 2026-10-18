@@ -1,4 +1,7 @@
+import base64
+import hashlib
 import logging
+import secrets
 import uuid
 from urllib.parse import quote as urlquote
 
@@ -25,6 +28,20 @@ STATE_MAX_AGE = 600
 
 #: 一次性 nonce 的缓存键前缀
 _STATE_KEY = "oauth_state:{}"
+
+#: PKCE code_verifier 的缓存键前缀（与 state 同寿命，回调时取用后立即删除）
+_PKCE_KEY = "oauth_pkce:{}"
+
+
+def _new_code_verifier() -> str:
+    """RFC 7636 的 code_verifier：43~128 个 [A-Za-z0-9-._~]。"""
+    return secrets.token_urlsafe(64)[:96]
+
+
+def _code_challenge(verifier: str) -> str:
+    """S256：base64url(sha256(verifier))，去掉 padding。"""
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
 def _redirect_uri(request, code: str) -> str:
@@ -189,6 +206,16 @@ class AuthorizeView(APIView):
             "scope": " ".join(platform.scopes or []),
             "state": state,
         }
+
+        # Garmin 这类平台强制 PKCE（官方规范：code_challenge_method=S256 required）。
+        # verifier 不能只留在内存里 —— 授权页走一圈回来是**另一个请求**，
+        # 所以和 nonce 一样存进缓存，回调时取出来交给 token 端点。
+        if platform.requires_pkce:
+            verifier = _new_code_verifier()
+            cache.set(_PKCE_KEY.format(nonce), verifier, timeout=STATE_MAX_AGE)
+            params["code_challenge"] = _code_challenge(verifier)
+            params["code_challenge_method"] = "S256"
+
         query = "&".join(f"{k}={urlquote(str(v))}" for k, v in params.items())
         return Response({"authorize_url": f"{platform.authorize_url}?{query}", "state": state})
 
@@ -254,6 +281,15 @@ class CallbackView(APIView):
             return back(False, "该授权链接已被使用或已过期，请重新发起授权")
         cache.delete(_STATE_KEY.format(nonce))
 
+        # PKCE：取回发起授权时生成的 verifier。取不到说明缓存已过期或链接被重放，
+        # 这时交换 token 必然失败（平台会报 invalid_grant），不如直接说清楚。
+        code_verifier = ""
+        if platform.requires_pkce:
+            code_verifier = cache.get(_PKCE_KEY.format(nonce)) or ""
+            cache.delete(_PKCE_KEY.format(nonce))
+            if not code_verifier:
+                return back(False, "PKCE 校验参数已过期，请重新发起授权")
+
         try:
             if platform.auth_type == "mock":
                 access, refresh = f"mock-token-{uuid.uuid4().hex[:12]}", ""
@@ -263,16 +299,16 @@ class CallbackView(APIView):
                 auth_code = request.query_params.get("code", "")
                 if not auth_code or not platform.token_url:
                     raise ValueError("缺少授权码或 token_url 未配置")
-                data = post_json(
-                    platform.token_url,
-                    {
-                        "grant_type": "authorization_code",
-                        "code": auth_code,
-                        "redirect_uri": _redirect_uri(request, code),
-                        "client_id": platform.client_id,
-                        "client_secret": platform.client_secret,
-                    },
-                )
+                token_payload = {
+                    "grant_type": "authorization_code",
+                    "code": auth_code,
+                    "redirect_uri": _redirect_uri(request, code),
+                    "client_id": platform.client_id,
+                    "client_secret": platform.client_secret,
+                }
+                if code_verifier:
+                    token_payload["code_verifier"] = code_verifier
+                data = post_json(platform.token_url, token_payload)
                 access = data.get("access_token", "")
                 refresh = data.get("refresh_token", "")
                 if not access:

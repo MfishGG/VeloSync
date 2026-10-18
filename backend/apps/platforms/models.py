@@ -32,6 +32,14 @@ class Platform(models.Model):
     # 与用户 Token 同级敏感 —— 泄漏后可冒充本应用。加密存储，不用明文。
     client_secret = EncryptedTextField(blank=True, default="")
     scopes = models.JSONField("授权范围", default=list, blank=True)
+    requires_pkce = models.BooleanField(
+        "强制 PKCE",
+        default=False,
+        help_text=(
+            "Garmin 等平台要求 OAuth 2.0 PKCE：授权时带 code_challenge、"
+            "换取 token 时带 code_verifier。开启后按 RFC 7636 的 S256 生成"
+        ),
+    )
     capabilities = models.JSONField(
         "能力（fetch/upload）", default=dict, blank=True
     )
