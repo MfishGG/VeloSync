@@ -59,13 +59,19 @@ class Platform(models.Model):
         ordering = ["id"]
 
     #: 走真实 OAuth 时必须齐备的字段（按优先级列出，用于提示"还缺什么"）
-    CREDENTIAL_FIELDS = ("authorize_url", "token_url", "client_id")
+    #
+    # client_secret 必须在列：换 access_token（tokens.py）与回调换取凭据
+    # （CallbackView）都要用它。此前漏了它，于是「配了前三个、忘了 secret」会被判成
+    # oauth_ready=True —— 界面照常显示「可浏览器授权」，用户走完授权流程却卡在换
+    # token 那一步，报的还是平台侧的 invalid_client，从我们这边完全看不出是配置缺失。
+    CREDENTIAL_FIELDS = ("authorize_url", "token_url", "client_id", "client_secret")
 
     #: 字段 → 中文说明，供前端与日志展示
     CREDENTIAL_LABELS = {
         "authorize_url": "授权地址 authorize_url",
         "token_url": "令牌地址 token_url",
         "client_id": "客户端 ID client_id",
+        "client_secret": "客户端密钥 client_secret",
     }
 
     def __str__(self):
@@ -76,7 +82,18 @@ class Platform(models.Model):
         """返回尚未配置的凭证字段；演示平台无需凭证，恒为空。"""
         if self.auth_type == "mock":
             return []
-        return [f for f in self.CREDENTIAL_FIELDS if not getattr(self, f, "")]
+        missing = []
+        for field in self.CREDENTIAL_FIELDS:
+            try:
+                value = getattr(self, field, "")
+            except Exception:
+                # client_secret 是加密字段：密钥变更或密文损坏时解密会抛
+                # TokenDecryptError。这里按「未配置」处理 —— 让它显示成待填，
+                # 而不是让整个平台列表页 500。
+                value = ""
+            if not value:
+                missing.append(field)
+        return missing
 
     @property
     def oauth_ready(self) -> bool:

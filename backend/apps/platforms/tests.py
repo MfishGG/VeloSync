@@ -85,6 +85,44 @@ class SeededPlatformsTests(TestCase):
         )
 
 
+class CredentialReadinessTests(TestCase):
+    """`oauth_ready` 必须把 client_secret 算进去。
+
+    少了它会出现最难查的一种状态：界面显示「可以授权」，用户也真的走完了平台授权，
+    但换 access_token 时被平台拒（invalid_client），而我们这边的日志只看到平台报错。
+    所以这里锁死「缺 secret 就不许说 ready」。
+    """
+
+    def test_missing_client_secret_is_not_ready(self):
+        platform = make_platform(
+            code="strava",
+            auth_type="oauth2",
+            authorize_url="https://example.test/oauth/authorize",
+            token_url="https://example.test/oauth/token",
+            client_id="cid",
+            client_secret="",
+        )
+        self.assertFalse(platform.oauth_ready)
+        self.assertIn("client_secret", platform.oauth_missing)
+
+    def test_all_four_present_is_ready(self):
+        platform = make_platform(
+            code="strava",
+            auth_type="oauth2",
+            authorize_url="https://example.test/oauth/authorize",
+            token_url="https://example.test/oauth/token",
+            client_id="cid",
+            client_secret="secret",
+        )
+        self.assertTrue(platform.oauth_ready)
+        self.assertEqual(platform.oauth_missing, [])
+
+    def test_mock_platform_needs_nothing(self):
+        platform = make_platform(code="mock", auth_type="mock")
+        self.assertTrue(platform.oauth_ready)
+        self.assertEqual(platform.oauth_missing, [])
+
+
 class EncryptedFieldTests(TestCase):
     def test_client_secret_is_encrypted_at_rest(self):
         platform = make_platform("strava", name="Strava", client_secret="s3cr3t")
