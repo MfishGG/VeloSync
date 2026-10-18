@@ -11,4 +11,7 @@ requests>=2.32
 python-dotenv>=1.0
 PyMySQL>=1.1
 fitparse>=0.0.12.dev0
+# 静态文件：容器里没有 Nginx，DEBUG=False 时 Django 自己也不服务 STATIC_ROOT，
+# 不装 WhiteNoise 的话 Django Admin 会退化成无样式的纯 HTML。
+whitenoise>=6.7
 gunicorn>=22.0

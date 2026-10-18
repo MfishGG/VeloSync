@@ -42,6 +42,10 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # 静态文件托管。云托管容器里没有 Nginx，而 DEBUG=False 时 Django 自己不服务
+    # STATIC_ROOT —— 缺了这层，Django Admin 会变成无样式的纯 HTML（CSS/JS 全 404）。
+    # 必须放在 SecurityMiddleware 之后、其余中间件之前，WhiteNoise 才能最快接管。
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
