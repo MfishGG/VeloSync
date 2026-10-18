@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import {
   Activity as ActivityIcon,
+  Download,
   Eye,
   FileUp,
   History,
@@ -11,7 +12,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { deleteFit, uploadFit, useFitDetail, useFitHistory } from "../api/queries";
+import { deleteFit, exportFit, uploadFit, useFitDetail, useFitHistory } from "../api/queries";
 import type { FitDetail, FitHistoryItem, FitMetricStats } from "../api/types";
 import { isAMapConfigured } from "../utils/amap";
 import { fmtClock, fmtDuration } from "../utils/format";
@@ -109,6 +110,24 @@ export default function FitPage() {
     setNotice(text);
     window.clearTimeout(noticeTimer.current);
     noticeTimer.current = window.setTimeout(() => setNotice(null), 3200);
+  };
+
+  /** 下载原始 FIT：先取 blob 再触发保存（导出接口要 JWT，直接跳转会丢 Authorization 头） */
+  const handleExport = async (item: FitHistoryItem) => {
+    try {
+      const blob = await exportFit(item.activity_id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${item.activity_name || "activity"}.fit`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "导出失败");
+    }
   };
 
   useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
@@ -396,6 +415,14 @@ export default function FitPage() {
                       >
                         <Eye className="h-3.5 w-3.5" />
                         查看
+                      </button>
+                      <button
+                        onClick={() => void handleExport(item)}
+                        title="下载原始 FIT 文件（可上传到 Garmin Connect 等平台）"
+                        className="mr-2 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                        FIT
                       </button>
                       <button
                         onClick={() => {

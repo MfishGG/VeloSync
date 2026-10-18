@@ -1,6 +1,8 @@
 from collections import defaultdict
 from datetime import timedelta, timezone as dt_timezone
+from urllib.parse import quote
 
+from django.http import HttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework import mixins, viewsets
@@ -55,6 +57,39 @@ class ActivityViewSet(
         if start_before and parse_date(start_before):
             qs = qs.filter(start_timestamp__date__lte=parse_date(start_before))
         return qs
+
+    @action(detail=True, methods=["get"], url_path="export-fit")
+    def export_fit(self, request, pk=None):
+        """GET /api/activities/{id}/export-fit/ —— 下载原始 FIT 文件。
+
+        用途：Garmin 这类没有可用开放 API 的平台（Program 暂停中），用户只能走
+        「下载文件 → 到对方网站手动上传」。
+
+        为什么吐原始文件而不是现场生成 TCX/GPX：解析结果里 `track` 只有经纬度、
+        没有时间戳，`samples` 又是降采样过的 —— 拿它们重建出来的文件既丢精度也丢
+        时间对应关系，导回任何平台都基本不可用。原始字节是唯一无损的形态。
+        """
+        activity = self.get_object()
+        fit_file = getattr(activity, "fit_file", None)
+        if not fit_file or not fit_file.data:
+            return Response(
+                {
+                    "detail": "该活动没有保存原始 FIT 文件"
+                    "（多为改动前导入的，重新导入同一文件即可补齐）"
+                },
+                status=409,
+            )
+
+        data = bytes(fit_file.data)
+        filename = f"{(activity.name or 'activity').strip()[:60]}.fit"
+        resp = HttpResponse(data, content_type="application/vnd.ant.fit")
+        # 同时给 ASCII 兜底与 RFC 5987 的 UTF-8 文件名：活动名可能是中文，
+        # 只给一种的话，部分浏览器会存成 download 或乱码。
+        resp["Content-Disposition"] = (
+            f'attachment; filename="activity.fit"; filename*=UTF-8\'\'{quote(filename)}'
+        )
+        resp["Content-Length"] = str(len(data))
+        return resp
 
     @action(detail=True, methods=["post"])
     def sync(self, request, pk=None):

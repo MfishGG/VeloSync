@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "./client";
+import { ApiError, api, getAccessToken } from "./client";
 import type {
   Activity,
   DashboardStats,
@@ -124,6 +124,31 @@ export function deleteFit(activityId: number, withActivity = false) {
     `/activities/${activityId}/fit/${withActivity ? "?with_activity=1" : ""}`,
     { method: "DELETE" },
   );
+}
+
+/**
+ * 下载活动的原始 FIT 文件。
+ *
+ * 不能直接 `window.open`——导出接口要 JWT，而浏览器跳转不会带 Authorization 头。
+ * 所以这里取 blob，再由调用方生成临时链接保存。返回的是**原始字节**，
+ * 不是重新生成的 TCX/GPX（后者会丢时间轴与精度）。
+ */
+export async function exportFit(activityId: number): Promise<Blob> {
+  const token = getAccessToken();
+  const res = await fetch(`/api/activities/${activityId}/export-fit/`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    let detail = `导出失败（${res.status}）`;
+    try {
+      const body = (await res.json()) as { detail?: string };
+      if (body?.detail) detail = body.detail;
+    } catch {
+      /* 非 JSON 响应：保留状态码文案 */
+    }
+    throw new ApiError(detail, res.status);
+  }
+  return res.blob();
 }
 
 // ---------- 变更 ----------
