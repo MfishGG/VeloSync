@@ -97,13 +97,19 @@ class Platform(models.Model):
         """移动端优先使用的绑定渠道。
 
         - `miniprogram`：已登记官方小程序 AppID，可小程序内直接跳转
-        - `app`：只有 URL Scheme，需复制链接到浏览器唤起官方 App
-        - `demo`：两者都缺，只能以演示身份绑定
+        - `oauth`：OAuth 凭证齐全，复制授权页链接到浏览器完成授权
+        - `demo`：以上都不满足，只能以演示身份绑定
+
+        第二档原来是「有 URL Scheme → 复制链接到浏览器唤起 App」。这条路实际上
+        走不通：iOS Safari 地址栏不接受自定义 scheme（`strava://` 会被判为无效
+        地址），安卓各浏览器行为也不一致，用户拿到的是一个打不开的链接。
+        而平台 OAuth 本来就是网页流程 —— 直接复制授权页链接（https）才是能真正
+        完成绑定的路径，所以改为按「凭证是否齐备」判断。
         """
         if self.miniprogram_appid:
             return "miniprogram"
-        if self.app_scheme:
-            return "app"
+        if self.oauth_ready:
+            return "oauth"
         return "demo"
 
 

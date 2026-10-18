@@ -36,8 +36,10 @@ class PlatformAdmin(admin.ModelAdmin):
                 "description": (
                     "微信不允许小程序直接唤起第三方 App。绑定优先级："
                     "① 填了「官方微信小程序 AppID」→ 小程序内 navigateToMiniProgram 跳转官方小程序授权；"
-                    "② 只有 URL Scheme → 复制链接到系统浏览器唤起官方 App；"
-                    "③ 两者都缺 → 只能以演示身份绑定。"
+                    "② 凭证齐全 → 复制平台授权页链接（https），在系统浏览器里登录并同意授权；"
+                    "③ 都不满足 → 只能以演示身份绑定。"
+                    "「App URL Scheme」字段保留但不参与渠道判定 —— iOS 浏览器地址栏"
+                    "不接受自定义 scheme，复制过去是个打不开的链接。"
                 ),
             },
         ),

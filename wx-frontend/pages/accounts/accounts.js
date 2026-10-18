@@ -3,10 +3,13 @@ const auth = require("../../utils/auth");
 const config = require("../../config");
 
 /**
- * 移动端绑定三级兜底（微信不允许小程序直接唤起第三方 App）：
+ * 移动端绑定渠道：
  *   ① 已登记官方小程序 AppID  → wx.navigateToMiniProgram 跳官方小程序授权
- *   ② 只有 URL Scheme        → 复制链接，引导用户在系统浏览器唤起官方 App
- *   ③ 两者都缺               → 以「演示身份」绑定，本地也能跑通全链路
+ *   ② OAuth 凭证齐全         → 复制授权页链接（https），在系统浏览器完成授权
+ *   ③ 以上都缺               → 以「演示身份」绑定，本地也能跑通全链路
+ *
+ * 第二档曾经是「复制 App 的 URL Scheme」，那条路走不通：iOS Safari 地址栏不接受
+ * 自定义 scheme，用户拿到的是打不开的链接。详见 bindViaBrowser 的注释。
  */
 Page({
   data: {
@@ -56,8 +59,8 @@ Page({
                 ? "演示平台"
                 : p.mobile_bind_channel === "miniprogram"
                   ? "可跳官方小程序"
-                  : p.mobile_bind_channel === "app"
-                    ? "可唤起官方 App"
+                  : p.mobile_bind_channel === "oauth"
+                    ? "浏览器授权"
                     : "仅演示绑定",
             /**
              * 面向用户的「绑定方式」：说清点下去会发生什么。
@@ -70,8 +73,8 @@ Page({
                 ? "演示平台，点击后直接绑定，无需授权"
                 : p.mobile_bind_channel === "miniprogram"
                   ? `点击「绑定账号」将跳转到 ${p.name} 官方小程序完成授权`
-                  : p.mobile_bind_channel === "app"
-                    ? `点击「绑定账号」将复制链接，需在浏览器中唤起 ${p.name} App 完成授权`
+                  : p.mobile_bind_channel === "oauth"
+                    ? `点击「绑定账号」将复制授权链接，在浏览器中登录 ${p.name} 完成授权`
                     : `${p.name} 暂未提供官方授权入口，将以演示身份绑定`,
             upload: !!(p.capabilities && p.capabilities.upload),
             boundCount: bound[p.id] || 0,
@@ -117,9 +120,9 @@ Page({
       items.push(`跳转 ${p.name} 官方小程序授权`);
       actions.push("mp");
     }
-    if (p.app_scheme) {
-      items.push(`复制链接，用浏览器打开 ${p.name} App`);
-      actions.push("app");
+    if (p.oauth_ready) {
+      items.push(`复制授权链接，在浏览器完成 ${p.name} 授权`);
+      actions.push("browser");
     }
     items.push("以演示身份绑定（本地跑通）");
     actions.push("demo");
@@ -131,7 +134,7 @@ Page({
       success: (res) => {
         const act = actions[res.tapIndex];
         if (act === "mp") this.bindViaMiniProgram(p);
-        else if (act === "app") this.bindViaApp(p);
+        else if (act === "browser") this.bindViaBrowser(p);
         else if (act === "demo") this.demoBind(p, `${p.name} 已用演示身份绑定`);
         else this.showHelp(p);
       },
@@ -167,29 +170,71 @@ Page({
     });
   },
 
-  /** ② 复制 URL Scheme，引导到系统浏览器打开官方 App */
-  bindViaApp(p) {
-    const scheme = p.app_scheme || ((config.officialAppLinks || {})[p.code] || {}).scheme || "";
-    if (!scheme) {
-      this.showHelp(p);
-      return;
-    }
-    wx.setClipboardData({
-      data: scheme,
-      success: () => {
-        wx.showModal({
-          title: `唤起 ${p.name} App`,
-          content:
-            `已将链接「${scheme}」复制到剪贴板。\n\n` +
-            "微信内无法直接打开其它 App 的链接，请：\n" +
-            "1) 退出微信，打开系统浏览器；\n" +
-            "2) 粘贴并访问该链接，即可唤起官方 App；\n" +
-            "3) 在 App 内完成账号授权。",
-          showCancel: false,
-          confirmText: "知道了",
+  /**
+   * ② 复制平台授权页链接，在系统浏览器里完成 OAuth
+   *
+   * 复制的是后端 `/accounts/{code}/authorize/` 生成的 https 授权地址（带一次性
+   * state），不是 App 的自定义 scheme。
+   *
+   * 原来这里复制的是 `strava://` 这类 scheme，让用户粘到浏览器 —— 那条路是错的，
+   * 而且是两层错：
+   *   1) iOS Safari 地址栏不接受自定义 scheme，会直接判为无效地址；安卓各浏览器
+   *      行为也不一致。用户拿到的是一个打不开的链接。
+   *   2) 就算侥幸打开 App，也完不成授权 —— 平台 OAuth 本来就是网页流程，
+   *      授权码要经浏览器回调到后端才能落库。
+   * 现在复制授权页链接，是真正能把账号绑上的路径。
+   */
+  bindViaBrowser(p) {
+    this.setData({ busy: p.code });
+    wx.showLoading({ title: "生成授权链接…", mask: true });
+    api.platforms
+      .authorize(p.code)
+      .then((res) => {
+        wx.hideLoading();
+        this.setData({ busy: "" });
+        const url = res && res.authorize_url;
+        if (!url) {
+          // 演示平台不返回 url（后端已就地建好账号），按绑定成功处理
+          this.load();
+          wx.showToast({ title: "绑定成功", icon: "success" });
+          return;
+        }
+        wx.setClipboardData({
+          data: url,
+          success: () => {
+            wx.showModal({
+              title: `授权 ${p.name}`,
+              content:
+                "授权链接已复制到剪贴板。请：\n" +
+                "1) 打开手机浏览器，粘贴并访问；\n" +
+                `2) 登录你的 ${p.name} 账号并同意授权；\n` +
+                "3) 看到授权成功后回到本页，下拉刷新。",
+              showCancel: false,
+              confirmText: "知道了",
+            });
+          },
         });
-      },
-    });
+      })
+      .catch((err) => {
+        wx.hideLoading();
+        this.setData({ busy: "" });
+        if (err && err.code === "oauth_not_configured") {
+          // 凭证在页面加载后被撤掉的情况：不把用户卡在这里，直接给可用的退路
+          wx.showModal({
+            title: `${p.name} 暂未开通真实授权`,
+            content: "该平台的 OAuth 凭证尚未配置，暂时只能以演示身份绑定。",
+            confirmText: "演示绑定",
+            success: (r) => {
+              if (r.confirm) this.demoBind(p, `${p.name} 已用演示身份绑定`);
+            },
+          });
+          return;
+        }
+        wx.showToast({
+          title: (err && err.message) || "生成授权链接失败",
+          icon: "none",
+        });
+      });
   },
 
   /** ③ 演示身份绑定 */
@@ -221,7 +266,7 @@ Page({
         `OAuth 凭证：${p.oauth_ready ? "已配置" : `未配置（缺 ${missing}）`}\n\n` +
         "在微信小程序内绑定第三方平台的方式：\n" +
         "① 官方小程序：在后台「平台 → 移动端绑定渠道」填 miniprogram_appid；\n" +
-        "② 官方 App：填 app_scheme，复制链接到浏览器唤起；\n" +
+        "② 浏览器授权：OAuth 凭证齐全后，复制授权页链接在浏览器完成；\n" +
         "③ 演示身份：无需凭证，用于本地跑通全链路。\n\n" +
         "Django Admin：/admin/platforms/platform/",
       showCancel: false,
