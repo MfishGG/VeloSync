@@ -122,6 +122,11 @@ class CredentialReadinessTests(TestCase):
         self.assertTrue(platform.oauth_ready)
         self.assertEqual(platform.oauth_missing, [])
 
+    def test_mock_channel_is_demo_not_oauth(self):
+        """演示平台不走 OAuth。它的 oauth_missing 恒空，容易被误判成 "oauth"。"""
+        platform = make_platform(code="mock", auth_type="mock")
+        self.assertEqual(platform.mobile_bind_channel, "demo")
+
 
 class EncryptedFieldTests(TestCase):
     def test_client_secret_is_encrypted_at_rest(self):

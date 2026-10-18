@@ -123,6 +123,10 @@ class Platform(models.Model):
         而平台 OAuth 本来就是网页流程 —— 直接复制授权页链接（https）才是能真正
         完成绑定的路径，所以改为按「凭证是否齐备」判断。
         """
+        if self.auth_type == "mock":
+            # 演示平台不走 OAuth。它的 oauth_missing 恒为空，若不先拦一道，
+            # 下面会把它判成 "oauth"，语义就反了。
+            return "demo"
         if self.miniprogram_appid:
             return "miniprogram"
         if self.oauth_ready:
