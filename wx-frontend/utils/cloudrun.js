@@ -21,8 +21,14 @@
 
 module.exports = {
   /** 云托管环境 ID，形如 prod-xxxxxxxx */
-  env: "",
+  env: "prod-d1gfldrtn99dcc236",
 
-  /** 云托管服务名称，如 velosync-api */
-  service: "",
+  /**
+   * 云托管服务名称，如 velosync-api。
+   *
+   * 取控制台「复制小程序示例」里 `X-WX-SERVICE` 的值 —— 那是权威口径。
+   * 注意别抄服务列表里带版本后缀的展示名（如 `django-xu8d-020`），
+   * 那个 `-020` 是版本号，填进去会 service not found。
+   */
+  service: "django-xu8d",
 };

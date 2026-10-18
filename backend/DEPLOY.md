@@ -58,7 +58,7 @@
 
 | 配置项 | 填写值 |
 |---|---|
-| 服务名称 | `velosync-api` |
+| 服务名称 | `django-xu8d`（本项目实际用的；新建服务可自定义，但要与 `utils/cloudrun.js` 一致） |
 | 部署方式 | **代码仓库（GitHub）**，不要选模板 |
 | 仓库 | `MfishGG/VeloSync` |
 | 分支 | `master` |
@@ -264,14 +264,17 @@ curl https://<你的云托管域名>/api/health/
    | 值 | 在哪 |
    |---|---|
    | **环境 ID**（形如 `prod-xxxxxxxx`） | 选中环境 → 「设置」页 |
-   | **服务名称**（如 `velosync-api`） | 「服务管理 → 服务列表」的名称，**不是**域名里那串随机字符 |
+   | **服务名称** | 最省事的来源是服务页右上角的「**复制小程序示例**」，里面 `X-WX-SERVICE` 就是准确值 |
+
+   ⚠️ 别抄服务列表里带版本后缀的展示名（如 `django-xu8d-020`）—— 那个 `-020`
+   是版本号，填进去会 `service not found`。
 
 2. 填进 `wx-frontend/utils/cloudrun.js`：
 
    ```js
    module.exports = {
      env: "prod-xxxxxxxx",
-     service: "velosync-api",
+     service: "django-xu8d",
    };
    ```
 
