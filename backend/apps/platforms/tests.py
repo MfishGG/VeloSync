@@ -130,6 +130,36 @@ class CredentialReadinessTests(TestCase):
         platform = make_platform(code="mock", auth_type="mock")
         self.assertEqual(platform.mobile_bind_channel, "demo")
 
+    def test_oauth_wins_over_miniprogram(self):
+        """凭证齐备时必须走 OAuth。
+
+        跳官方小程序没有回调、拿不到 token，一行都不会落库 —— 它不是绑定。
+        此前 appid 优先：凭证刚配好、顺手又填了 appid 的平台会静默退化成
+        「点一下就被跳走、什么也没发生」。
+        """
+        platform = make_platform(
+            code="garmin",
+            auth_type="oauth2",
+            authorize_url="https://example.test/oauth/authorize",
+            token_url="https://example.test/oauth/token",
+            client_id="cid",
+            client_secret="secret",
+            miniprogram_appid="wx1234567890abcdef",
+        )
+        self.assertEqual(platform.mobile_bind_channel, "oauth")
+
+    def test_miniprogram_is_fallback_without_credentials(self):
+        platform = make_platform(
+            code="garmin",
+            auth_type="oauth2",
+            miniprogram_appid="wx1234567890abcdef",
+        )
+        self.assertEqual(platform.mobile_bind_channel, "miniprogram")
+
+    def test_no_credentials_and_no_appid_is_demo(self):
+        platform = make_platform(code="garmin", auth_type="oauth2")
+        self.assertEqual(platform.mobile_bind_channel, "demo")
+
 
 class EncryptedFieldTests(TestCase):
     def test_client_secret_is_encrypted_at_rest(self):

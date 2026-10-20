@@ -121,8 +121,8 @@ class Platform(models.Model):
     def mobile_bind_channel(self) -> str:
         """移动端优先使用的绑定渠道。
 
-        - `miniprogram`：已登记官方小程序 AppID，可小程序内直接跳转
-        - `oauth`：OAuth 凭证齐全，复制授权页链接到浏览器完成授权
+        - `oauth`：OAuth 凭证齐全，复制授权页链接到浏览器完成授权 —— **真绑定**
+        - `miniprogram`：已登记官方小程序 AppID，跳过去让用户自己操作 —— 只是引导
         - `demo`：以上都不满足，只能以演示身份绑定
 
         第二档原来是「有 URL Scheme → 复制链接到浏览器唤起 App」。这条路实际上
@@ -130,15 +130,20 @@ class Platform(models.Model):
         地址），安卓各浏览器行为也不一致，用户拿到的是一个打不开的链接。
         而平台 OAuth 本来就是网页流程 —— 直接复制授权页链接（https）才是能真正
         完成绑定的路径，所以改为按「凭证是否齐备」判断。
+
+        **oauth 必须排在 miniprogram 前面**：跳官方小程序只是把用户送到对方界面，
+        没有回调、拿不到 token，一行都不会落库 —— 它不是绑定。此前 appid 优先，
+        于是「凭证配好了、顺手又把 appid 填上」的平台会从能绑退化成绑不上，
+        而且界面上看不出来（渠道标签还在，点下去只是跳走）。
         """
         if self.auth_type == "mock":
             # 演示平台不走 OAuth。它的 oauth_missing 恒为空，若不先拦一道，
             # 下面会把它判成 "oauth"，语义就反了。
             return "demo"
-        if self.miniprogram_appid:
-            return "miniprogram"
         if self.oauth_ready:
             return "oauth"
+        if self.miniprogram_appid:
+            return "miniprogram"
         return "demo"
 
 
