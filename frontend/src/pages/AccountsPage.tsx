@@ -45,7 +45,7 @@ export default function AccountsPage() {
     setGap(null);
     try {
       const res = await api<{ authorize_url: string | null; mock?: boolean }>(
-        `/accounts/${platform.code}/authorize/`
+        `/accounts/${platform.code}/authorize/?client=web`
       );
       if (res.authorize_url) {
         window.location.href = res.authorize_url; // 跳转平台授权页

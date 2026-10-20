@@ -271,13 +271,18 @@ class AuthorizeView(APIView):
         # 一次授权码被重放就能反复创建绑定。
         nonce = uuid.uuid4().hex
         cache.set(_STATE_KEY.format(nonce), code, timeout=STATE_MAX_AGE)
+
         # 发起方要进 state：回调是浏览器最后停的地方，小程序 / Web 两种客户端
         # 的落点完全不同（小程序要一张「回微信」的结果页，Web 要回工作台账号页）。
         # 不能靠 query 参数传 —— 回调的 URL 是平台按登记值原样跳回来的，
         # 我们无法在它上面追加任何东西。
-        client = request.query_params.get("client", "web")
+        #
+        # 不传 = 还没更新的老客户端，**不要**在这里替它猜成 "web"：那会让回调
+        # 直接重定向到 FRONTEND_URL（生产上是 localhost）。留空，交给回调
+        # 按「Web 工作台到底有没有上线」判断。
+        client = request.query_params.get("client", "")
         if client not in ("web", "wx"):
-            client = "web"
+            client = ""
         state = signing.dumps(
             {"user_id": request.user.id, "platform": code, "nonce": nonce, "client": client}
         )
@@ -345,11 +350,17 @@ class CallbackView(APIView):
         except Exception:
             state, state_bad = {}, "state 校验失败，请重新发起授权"
 
-        client = state.get("client") or "web"
         frontend = (getattr(settings, "FRONTEND_URL", "") or "").rstrip("/")
         # 结果页里给 Web 用户一个入口 —— 只在 FRONTEND_URL 真的是公网地址时才给，
         # 否则那个链接点开还是打不开，等于再骗他一次。
         public_web = _has_public_frontend()
+
+        # state 里没有 client 的只有两种情况：① 还没更新到新包的小程序（它不会传
+        # `?client=wx`）；② Web。分不清时看「Web 工作台到底有没有上线」：没上线
+        # 就只可能是 ①，这时给结果页远好于把用户扔去 localhost。
+        # 这是给「后端已更新、小程序还没上传」那段窗口期的兜底 —— 少这一步，
+        # 前后端版本稍微错开就又是一次「绑定失败」。
+        client = state.get("client") or ("web" if (settings.DEBUG or public_web) else "wx")
 
         def back(ok: bool, msg: str = ""):
             if client == "wx" or not frontend:
@@ -437,12 +448,21 @@ class CallbackView(APIView):
             )
             return back(True)
         except Exception as exc:  # noqa: BLE001
+            # 完整原因只进日志。这个分支里 `str(exc)` 是平台返回的原文，形如
+            # `https://www.strava.com/oauth/token 返回 HTTP 400：{"message":...
+            # —— 地址、HTTP 状态码、JSON 对终端用户没有任何用处，印在结果页上
+            # 只会让他更慌，也让「绑定失败」显得像系统崩了。要排查请看
+            # SyncLog（/api/logs/、Django Admin 都能查到原文）。
             SyncLog.objects.create(
                 user_id=user_id,
                 level="error",
                 message=f"绑定 {platform.name} 失败: {exc}",
             )
-            return back(False, str(exc)[:200])
+            return back(
+                False,
+                f"没能完成与 {platform.name} 的授权。授权码可能已失效，或被你在"
+                "平台上取消了。回到小程序重新点一次绑定即可。",
+            )
 
 
 def _platform_user_id(data: dict, user_id: int) -> str:

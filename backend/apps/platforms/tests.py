@@ -423,7 +423,9 @@ class PkceFlowTests(TestCase):
         self.client.force_authenticate(user=self.user)
 
     def _start_auth(self, code="garmin"):
-        resp = self.client.get(f"/api/accounts/{code}/authorize/")
+        # 显式 client=web：这些用例断言的是回调的 302 落点，与「谁发起的」无关，
+        # 而 state 里不带 client 时回调会按环境自行判断（见 CallbackLandingTests）。
+        resp = self.client.get(f"/api/accounts/{code}/authorize/?client=web")
         self.assertEqual(resp.status_code, 200, resp.content[:200])
         url = resp.json()["authorize_url"]
         return parse_qs(urlparse(url).query)
@@ -522,11 +524,12 @@ class CallbackLandingTests(TestCase):
         q = self._start("?client=wx")
         self.assertEqual(signing.loads(q["state"][0])["client"], "wx")
 
-    def test_unknown_client_falls_back_to_web(self):
+    def test_invalid_client_is_left_unset(self):
+        """非法值不签进 state —— 回调会按环境自行判断，而不是盲信一个乱码。"""
         from django.core import signing
 
         q = self._start("?client=../evil")
-        self.assertEqual(signing.loads(q["state"][0])["client"], "web")
+        self.assertEqual(signing.loads(q["state"][0])["client"], "")
 
     def test_miniprogram_callback_returns_result_page_not_redirect(self):
         q = self._start("?client=wx")
@@ -549,7 +552,7 @@ class CallbackLandingTests(TestCase):
         self.assertIn("回到微信", body)
 
     def test_web_callback_still_redirects_to_frontend(self):
-        q = self._start()  # 不带 client → web
+        q = self._start("?client=web")
         with patch("apps.platforms.views.post_json") as post_json:
             post_json.return_value = {
                 "access_token": "at",
@@ -563,6 +566,27 @@ class CallbackLandingTests(TestCase):
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/accounts?bind=ok", resp["Location"])
 
+    @override_settings(DEBUG=False, FRONTEND_URL="http://localhost:5173")
+    def test_legacy_miniprogram_build_still_gets_result_page(self):
+        """后端新、小程序旧（不会传 `?client=wx`）时也不能跳 localhost。
+
+        这是升级窗口期：后端先部署，手机上的小程序还是老包。老包不带 client，
+        而生产环境 Web 工作台并没有上线 —— 唯一可能的发起方就是小程序。
+        """
+        q = self._start()  # 老包的调用方式：不带 client
+        with patch("apps.platforms.views.post_json") as post_json:
+            post_json.return_value = {
+                "access_token": "at",
+                "refresh_token": "rt",
+                "expires_in": 3600,
+                "athlete": {"id": 12345678},
+            }
+            resp = self.client.get(
+                f"/api/accounts/strava/callback/?code=auth-code&state={q['state'][0]}"
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("绑定成功", resp.content.decode())
+
     def test_bad_state_explains_itself_on_result_page(self):
         resp = self.client.get("/api/accounts/strava/callback/?code=x&state=broken")
         # 没有可用的 state 时按 Web 处理（本机开发就是这条路径），
@@ -570,3 +594,26 @@ class CallbackLandingTests(TestCase):
         self.assertIn(resp.status_code, (200, 302))
         text = resp.content.decode() if resp.status_code == 200 else unquote(resp["Location"])
         self.assertIn("state", text.lower())
+
+    def test_technical_failure_detail_goes_to_log_not_to_page(self):
+        """结果页是给终端用户看的，平台返回的 URL / HTTP 码 / JSON 不该上屏。"""
+        from apps.synclogs.models import SyncLog
+
+        q = self._start("?client=wx")
+        raw = 'https://www.strava.com/oauth/token 返回 HTTP 400：{"message":"Bad Request"}'
+        with patch("apps.platforms.views.post_json", side_effect=ValueError(raw)):
+            resp = self.client.get(
+                f"/api/accounts/strava/callback/?code=auth-code&state={q['state'][0]}"
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.content.decode()
+        self.assertIn(f"没能完成与 {self.platform.name} 的授权", body)
+        self.assertNotIn("oauth/token", body)
+        self.assertNotIn("Bad Request", body)
+
+        # 原文必须留在日志里，否则问题就真的查不出来了
+        self.assertTrue(
+            SyncLog.objects.filter(message__contains="oauth/token").exists(),
+            "技术原因被丢掉了：结果页不展示是对的，但日志里必须留着",
+        )
