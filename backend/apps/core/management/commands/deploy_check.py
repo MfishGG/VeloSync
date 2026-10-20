@@ -158,9 +158,21 @@ class Command(BaseCommand):
             results.append((OK, "DEMO_MODE", "已关闭，/api/auth/demo/ 返回 404"))
 
         # ---- 前端回调地址 ----
+        # Web 端 OAuth 绑定完要回到工作台的账号页，这个地址就是落点。
+        # 小程序端不再依赖它（回调直接给结果页），所以这里只提示、不拦截。
         frontend = getattr(settings, "FRONTEND_URL", "")
         if frontend.startswith("https://"):
             results.append((OK, "FRONTEND_URL", frontend))
+        elif "localhost" in frontend or "127.0.0.1" in frontend:
+            results.append(
+                (
+                    WARN,
+                    "FRONTEND_URL",
+                    f"{frontend}（仍是本机地址）。小程序端不受影响（回调会返回结果页），"
+                    "但 Web 端绑定完会被跳到打不开的 localhost。"
+                    "Web 上线后请填公网 https 地址。",
+                )
+            )
         else:
             results.append((WARN, "FRONTEND_URL", f"{frontend}（非 https，OAuth 回调会退到 http）"))
 

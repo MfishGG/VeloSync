@@ -8,7 +8,9 @@ from urllib.parse import quote as urlquote
 from django.conf import settings
 from django.core import signing
 from django.core.cache import cache
+from django.http import HttpResponse
 from django.shortcuts import redirect
+from django.utils.html import escape
 from rest_framework import viewsets
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -70,6 +72,78 @@ def _redirect_uri(request, code: str) -> str:
             resolved,
         )
     return resolved
+
+
+# ---------------- OAuth 回调的落点 ----------------
+
+#: 回调页（浏览器最后停的地方）的样式。内联，不依赖任何静态文件 ——
+#: 这一页必须能独立打开，此时用户没有登录态、也没有前端资源可用。
+_RESULT_CSS = """
+*{box-sizing:border-box;margin:0;padding:0}
+body{min-height:100vh;display:flex;align-items:center;justify-content:center;
+padding:32px 20px;background:#f4f5fb;color:#1f2430;
+font:16px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+.card{width:100%;max-width:420px;background:#fff;border-radius:20px;padding:32px 24px;
+box-shadow:0 12px 32px rgba(31,36,48,.08);text-align:center}
+.badge{width:64px;height:64px;margin:0 auto 20px;border-radius:50%;
+display:flex;align-items:center;justify-content:center;font-size:34px;line-height:1}
+.ok .badge{background:#e8f7ef;color:#0f9d58}
+.err .badge{background:#fdecea;color:#d93025}
+h1{font-size:20px;margin-bottom:12px;font-weight:600}
+p{font-size:15px;color:#5b6275;word-break:break-word}
+.reason{margin-top:14px;padding:12px 14px;border-radius:12px;background:#f6f7fb;
+font-size:13px;color:#6b7280;text-align:left}
+.tip{margin-top:22px;font-size:14px;color:#1f2430}
+.link{display:inline-block;margin-top:22px;color:#3b5bdb;text-decoration:none;font-size:14px}
+"""
+
+
+def _result_page(ok: bool, msg: str = "", web_url: str = "") -> str:
+    """回调结果页：面向「在浏览器里绑完、要回到小程序」的用户。
+
+    刻意做成一整页而不是一句 "绑定成功"：用户是从微信跳出来、又要在浏览器里
+    完成第三方登录的，中途切了好几次 App，最后必须有人明确告诉他「现在回哪儿」。
+    """
+    if ok:
+        title = "绑定成功"
+        text = "授权已完成，这个平台的账号已经和 VeloSync 关联好了。"
+        tip = "请回到微信，在「我的 → 平台账号」下拉刷新，即可看到已绑定的账号。"
+        badge = "✓"
+    else:
+        title = "绑定没有完成"
+        text = "授权过程中出了问题，账号尚未绑定。"
+        tip = "请回到小程序，在「我的 → 平台账号」重新点一次绑定。"
+        badge = "!"
+
+    reason = f'<div class="reason">{escape(msg)}</div>' if msg else ""
+    link = f'<a class="link" href="{escape(web_url)}">前往 Web 工作台查看</a>' if web_url else ""
+    return f"""<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>{title} · VeloSync</title><style>{_RESULT_CSS}</style></head>
+<body><div class="card {'ok' if ok else 'err'}">
+<div class="badge">{badge}</div>
+<h1>{title}</h1>
+<p>{text}</p>
+{reason}
+<p class="tip">{tip}</p>
+{link}
+</div></body></html>"""
+
+
+def _has_public_frontend() -> str:
+    """Web 工作台的可用地址；没配或不指向公网时返回空串。
+
+    `FRONTEND_URL` 默认值是 `http://localhost:5173`（前端 dev server）。生产上
+    没配它，回调就会把手机浏览器扔到「localhost 拒绝连接」——用户看到的是
+    「绑定失败」，实际是**绑成功了、只是落点错了**。
+    """
+    frontend = (getattr(settings, "FRONTEND_URL", "") or "").rstrip("/")
+    if not frontend.startswith(("http://", "https://")):
+        return ""
+    if "//localhost" in frontend or "//127.0.0.1" in frontend:
+        return ""
+    return frontend
 
 
 class PlatformViewSet(viewsets.ReadOnlyModelViewSet):
@@ -197,7 +271,16 @@ class AuthorizeView(APIView):
         # 一次授权码被重放就能反复创建绑定。
         nonce = uuid.uuid4().hex
         cache.set(_STATE_KEY.format(nonce), code, timeout=STATE_MAX_AGE)
-        state = signing.dumps({"user_id": request.user.id, "platform": code, "nonce": nonce})
+        # 发起方要进 state：回调是浏览器最后停的地方，小程序 / Web 两种客户端
+        # 的落点完全不同（小程序要一张「回微信」的结果页，Web 要回工作台账号页）。
+        # 不能靠 query 参数传 —— 回调的 URL 是平台按登记值原样跳回来的，
+        # 我们无法在它上面追加任何东西。
+        client = request.query_params.get("client", "web")
+        if client not in ("web", "wx"):
+            client = "web"
+        state = signing.dumps(
+            {"user_id": request.user.id, "platform": code, "nonce": nonce, "client": client}
+        )
 
         params = {
             "client_id": platform.client_id,
@@ -254,16 +337,33 @@ class CallbackView(APIView):
     permission_classes = [AllowAny]  # 由平台重定向回来，无 JWT
 
     def get(self, request, code: str):
-        frontend = settings.FRONTEND_URL.rstrip("/")
+        # state 要在最前面解出来：失败分支也得知道「这是谁发起的」，否则
+        # 一个 state 过期的手机用户会被扔到 Web 的账号页去。
+        try:
+            state = signing.loads(request.query_params.get("state", ""), max_age=STATE_MAX_AGE)
+            state_bad = ""
+        except Exception:
+            state, state_bad = {}, "state 校验失败，请重新发起授权"
+
+        client = state.get("client") or "web"
+        frontend = (getattr(settings, "FRONTEND_URL", "") or "").rstrip("/")
+        # 结果页里给 Web 用户一个入口 —— 只在 FRONTEND_URL 真的是公网地址时才给，
+        # 否则那个链接点开还是打不开，等于再骗他一次。
+        public_web = _has_public_frontend()
 
         def back(ok: bool, msg: str = ""):
+            if client == "wx" or not frontend:
+                # 小程序：给一张结果页。浏览器里没有「回小程序」这种 API，
+                # 只能把话说清楚（绑成功没有、现在该回哪儿）。
+                return HttpResponse(
+                    _result_page(ok, msg, web_url=public_web),
+                    content_type="text/html; charset=utf-8",
+                )
             suffix = f"?bind={'ok' if ok else 'error'}&msg={urlquote(msg)}"
             return redirect(f"{frontend}/accounts{suffix}")
 
-        try:
-            state = signing.loads(request.query_params.get("state", ""), max_age=STATE_MAX_AGE)
-        except Exception:
-            return back(False, "state 校验失败，请重新发起授权")
+        if state_bad:
+            return back(False, state_bad)
 
         user_id = state.get("user_id")
         platform = Platform.objects.filter(code=code, is_active=True).first()

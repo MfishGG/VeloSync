@@ -55,8 +55,14 @@ const platforms = {
   accounts: () => api("/accounts/"),
   removeAccount: (id) => api(`/accounts/${id}/`, { method: "DELETE" }),
 
-  /** 真实 OAuth：返回 authorize_url（未配置凭证时抛 ApiError(code=oauth_not_configured)） */
-  authorize: (code) => api(`/accounts/${code}/authorize/`),
+  /**
+   * 真实 OAuth：返回 authorize_url（未配置凭证时抛 ApiError(code=oauth_not_configured)）
+   *
+   * `client=wx` 会写进后端签名的 state 里 —— 回调最后落在**浏览器**，
+   * 后端据此给小程序返回一张「绑定成功，请回微信」的结果页，而不是把
+   * 用户重定向到 Web 工作台（那个地址在手机上多半打不开）。
+   */
+  authorize: (code) => api(`/accounts/${code}/authorize/?client=wx`),
 
   /** 演示身份绑定：无凭证也能跑通全链路 */
   demoBind: (code) => api(`/accounts/${code}/demo-bind/`, { method: "POST" }),

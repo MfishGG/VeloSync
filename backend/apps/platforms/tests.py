@@ -5,7 +5,7 @@ Token 从不刷新、解密的密钥可能退化成公开值、Strava 的用户 
 """
 from datetime import timedelta
 from unittest.mock import Mock, patch
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from django.contrib.auth.models import User
 from django.core.cache import cache
@@ -455,3 +455,88 @@ class PkceFlowTests(TestCase):
         q = self._start_auth("strava")
         self.assertNotIn("code_challenge", q)
         self.assertNotIn("code_challenge_method", q)
+
+
+class CallbackLandingTests(TestCase):
+    """OAuth 回调最后停在哪 —— 小程序和 Web 的答案不一样。
+
+    手机上的绑定是「复制链接 → 系统浏览器 → 第三方登录 → 回调」，回调是
+    **浏览器**里的最后一页。此前这里无条件重定向到 `FRONTEND_URL`，而它的默认值
+    是 `http://localhost:5173`：用户绑成功后浏览器跳去 localhost，看到「拒绝连接」，
+    结论是「绑定失败」。账号其实已经绑上了 —— 只是落点错了，且小程序无从得知。
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user("landing", "landing@example.test", "pw-12345")
+        self.platform = make_platform(
+            code="strava",
+            auth_type="oauth2",
+            authorize_url="https://www.strava.com/oauth/authorize",
+            token_url="https://www.strava.com/oauth/token",
+            api_base="https://www.strava.com/api/v3",
+            client_id="cid",
+            client_secret="secret",
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def _start(self, query=""):
+        resp = self.client.get(f"/api/accounts/strava/authorize/{query}")
+        self.assertEqual(resp.status_code, 200, resp.content[:200])
+        url = resp.json()["authorize_url"]
+        return parse_qs(urlparse(url).query)
+
+    def test_client_is_signed_into_state(self):
+        from django.core import signing
+
+        q = self._start("?client=wx")
+        self.assertEqual(signing.loads(q["state"][0])["client"], "wx")
+
+    def test_unknown_client_falls_back_to_web(self):
+        from django.core import signing
+
+        q = self._start("?client=../evil")
+        self.assertEqual(signing.loads(q["state"][0])["client"], "web")
+
+    def test_miniprogram_callback_returns_result_page_not_redirect(self):
+        q = self._start("?client=wx")
+        with patch("apps.platforms.views.post_json") as post_json:
+            post_json.return_value = {
+                "access_token": "at",
+                "refresh_token": "rt",
+                "expires_in": 3600,
+                "athlete": {"id": 12345678},
+            }
+            resp = self.client.get(
+                f"/api/accounts/strava/callback/?code=auth-code&state={q['state'][0]}"
+            )
+
+        # 关键：不是 302。浏览器里没有能回小程序的跳转，只能把结果说清楚。
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("text/html", resp["Content-Type"])
+        body = resp.content.decode()
+        self.assertIn("绑定成功", body)
+        self.assertIn("回到微信", body)
+
+    def test_web_callback_still_redirects_to_frontend(self):
+        q = self._start()  # 不带 client → web
+        with patch("apps.platforms.views.post_json") as post_json:
+            post_json.return_value = {
+                "access_token": "at",
+                "refresh_token": "rt",
+                "expires_in": 3600,
+                "athlete": {"id": 12345678},
+            }
+            resp = self.client.get(
+                f"/api/accounts/strava/callback/?code=auth-code&state={q['state'][0]}"
+            )
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/accounts?bind=ok", resp["Location"])
+
+    def test_bad_state_explains_itself_on_result_page(self):
+        resp = self.client.get("/api/accounts/strava/callback/?code=x&state=broken")
+        # 没有可用的 state 时按 Web 处理（本机开发就是这条路径），
+        # 但错误原因必须进 Location，不能被吞掉。
+        self.assertIn(resp.status_code, (200, 302))
+        text = resp.content.decode() if resp.status_code == 200 else unquote(resp["Location"])
+        self.assertIn("state", text.lower())
