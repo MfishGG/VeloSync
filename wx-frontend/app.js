@@ -1,7 +1,4 @@
 const auth = require("./utils/auth");
-const request = require("./utils/request");
-const config = require("./config");
-const env = require("./utils/env");
 const cloudrun = require("./utils/cloudrun");
 
 /** 后端地址缓存的键与「配置版本戳」键 */
@@ -39,20 +36,13 @@ App({
     if (user) this.globalData.user = user;
     this.globalData.demo = auth.isDemoMode();
 
-    // 恢复自定义后端地址（仅开发版/体验版的登录页可改；设置页的那个入口已移除）。
-    // 加版本戳：config.js 改了 cloudBaseUrl / env 后，旧缓存要自动失效，
-    // 否则改了配置却仍连旧地址（这是很容易踩的坑）。
+    // 清理历史遗留的自定义后端地址。
     //
-    // 正式版必须丢弃而不是读取：该入口在正式版不存在，缓存里若还有地址，
-    // 只可能是被诱导写入的残留值，读它等于把用户 JWT 送到攻击者服务器。
-    // 这层判断放在 onLaunch 而不是某个页面里 —— 启动即生效，不依赖用户走了哪条路径。
-    const isDev = env.isDevVersion();
-    const saved = wx.getStorageSync(BASE_URL_KEY);
-    const savedStamp = wx.getStorageSync(BASE_URL_STAMP);
-    if (saved && isDev && savedStamp === config.configStamp) {
-      request.setBaseUrl(saved);
-    } else if (saved) {
-      // 配置已变、或当前是正式版：丢弃缓存，回落到 config.baseUrl
+    // 登录页曾经提供「改接口地址」入口（开发版/体验版可见），现已整体移除，
+    // 因此**没有任何界面能把地址写进这个 key**。这里保留清理而不是直接删掉：
+    // 老版本装着这个缓存的用户升级上来时，残留值必须被丢掉 —— 否则那条路径
+    // 仍然活着，等于把用户 JWT 送到缓存里那个地址。
+    if (wx.getStorageSync(BASE_URL_KEY)) {
       wx.removeStorageSync(BASE_URL_KEY);
       wx.removeStorageSync(BASE_URL_STAMP);
     }

@@ -5,35 +5,6 @@
     <view class="hero__sub">速同 · 跨平台运动数据同步中枢</view>
   </view>
 
-  <!-- 后端接口地址：真机预览时在登录前就能改，避免进不去设置页。
-       仅非正式版渲染 —— 正式版里这个入口是一条 Token 外泄通道。 -->
-  <view class="card stack" wx:if="{{isDev && editingBase}}">
-    <view class="card__title">后端接口地址</view>
-    <view class="field">
-      <input
-        class="input"
-        value="{{draftUrl}}"
-        bindinput="onBaseInput"
-        placeholder="http://192.168.1.5:8000/api"
-        placeholder-class="placeholder"
-      />
-    </view>
-    <view class="tip">
-      真机预览请填电脑的内网 IP（本机为 192.168.31.254），不要写 127.0.0.1 —— 在手机上它指向手机自己。
-    </view>
-    <view class="alert alert--info" wx:if="{{baseTestOk}}">
-      连接正常 · 登录模式：{{baseMode === 'oauth' ? '已配置 AppID' : '演示身份'}}
-    </view>
-    <view class="alert alert--danger" wx:if="{{baseTestErr}}">{{baseTestErr}}</view>
-    <view class="row row-gap">
-      <button class="btn btn--soft grow" bindtap="cancelBaseEdit">取消</button>
-      <button class="btn btn--soft grow" bindtap="testBaseUrl" disabled="{{baseTesting}}">
-        {{baseTesting ? '测试中…' : '测试连接'}}
-      </button>
-      <button class="btn btn--primary grow" bindtap="saveBaseUrl">保存</button>
-    </view>
-  </view>
-
   <!-- 微信一键登录：小程序唯一登录方式 -->
   <view class="card stack">
     <view class="card__title">微信登录</view>
@@ -51,7 +22,6 @@
 
     <view class="alert alert--warning" wx:if="{{providersFailed}}">
       {{providersFailText}}
-      <text class="t-primary" wx:if="{{isDev}}" bindtap="editBase">修改接口地址</text>
     </view>
     <view class="alert alert--success" wx:elif="{{wxMode === 'oauth'}}">
       已接入微信真实登录：点击上方按钮将唤起微信授权，昵称与头像来自你的微信账号。
@@ -73,10 +43,6 @@
       无需授权任何平台账号，直接进入一个预置好的演示账号：含近 30 天活动、示例同步任务与同步日志。
       演示数据为所有访客共用，与你的真实账号完全隔离。
     </view>
-  </view>
-
-  <view class="login__base" wx:if="{{isDev}}" bindtap="editBase">
-    接口地址：{{baseUrlHost}} · <text class="t-primary">修改</text>
   </view>
 
   <view class="safe-bottom"></view>

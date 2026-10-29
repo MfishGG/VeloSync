@@ -29,12 +29,16 @@ class ApiError extends Error {
   }
 }
 
-let baseUrl = config.baseUrl;
+/**
+ * 后端地址：**启动时由 config.js 决定，运行期不可改**。
+ *
+ * 以前这里是 `let` + `setBaseUrl()`，供登录页那个「接口地址」入口调用。
+ * 那个入口已整体删除，因此把可写性也一并去掉了 —— 留着 setter 等于留一个
+ * 「任何页面都能把 Bearer Token 发到任意服务器」的接口，比界面上多一个输入框
+ * 更隐蔽。要换地址就改 `config.js` 的 `env` 再上传。
+ */
+const baseUrl = config.baseUrl;
 
-/** 运行期切换后端地址（仅开发版登录页的「接口地址」入口会调用） */
-function setBaseUrl(url) {
-  if (url) baseUrl = url.replace(/\/+$/, "");
-}
 function getBaseUrl() {
   return baseUrl;
 }
@@ -344,7 +348,6 @@ module.exports = {
   upload,
   poll,
   ApiError,
-  setBaseUrl,
   getBaseUrl,
   canUseCallContainer,
 };

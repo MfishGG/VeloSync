@@ -43,14 +43,6 @@
   text-align: center;
 }
 
-/* 底部常驻的接口地址入口（真机预览时随时可改） */
-.login__base {
-  text-align: center;
-  font-size: 22rpx;
-  color: var(--t3);
-  padding: 4rpx 0;
-}
-
 /* 分隔行 */
 .divider-row {
   display: flex;

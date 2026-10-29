@@ -6,11 +6,12 @@ const config = require("../../config");
 const env = require("../../utils/env");
 
 const DEVICE_KEY = "velosync_device_id";
-const BASE_URL_KEY = "velosync_base_url";
 
-// 发布版必须隐藏「接口地址」编辑入口 —— 它是这里仅存的开发入口，
-// 也是唯一还保留的调试通道（设置页的那块已整体移除）。
-// 判定逻辑统一走 utils/env，避免多处拷贝漂移出安全缺口。
+// 登录页不再提供任何「改后端地址」的入口 —— 那是仅存的 Token 外泄通道：
+// 任何诱导（截图教程、群消息「改下地址就能用」）都能让用户在不知情下把
+// `Authorization: Bearer <JWT>` 发到别人的服务器。要换地址只能改 config.js
+// 的 `env` 重新上传，这是开发者的事，不该放在用户界面上。
+// 环境判定仍走 utils/env，供错误文案区分开发版 / 正式版。
 const isDevVersion = env.isDevVersion;
 
 /** 从完整 URL 中取出主机部分，供界面提示用 */
@@ -45,32 +46,19 @@ Page({
     demoAvailable: false,
     demoLoading: false,
 
-    // 后端接口地址（真机预览时可在登录前直接改，不至于进不去设置页）
+    // 当前生效的后端地址。只用于把主机名写进错误提示（排查用），界面不提供修改。
     baseUrl: "",
     baseUrlHost: "",
-    editingBase: false,
-    draftUrl: "",
-    baseTesting: false,
-    baseTestOk: false,
-    baseTestErr: "",
-    baseMode: "mock",
-    /** 是否非正式版。只有非正式版才渲染接口地址编辑入口 */
+    /** 是否非正式版。只影响错误文案说得多细，不影响任何功能入口 */
     isDev: true,
   },
 
   onLoad() {
     const isDev = isDevVersion();
-    const stored = wx.getStorageSync(BASE_URL_KEY) || request.getBaseUrl() || config.baseUrl;
-    // 正式版：清掉可能残留的自定义地址，强制回到 config.baseUrl
-    if (!isDev && wx.getStorageSync(BASE_URL_KEY)) {
-      wx.removeStorageSync(BASE_URL_KEY);
-      request.setBaseUrl(config.baseUrl);
-    }
-    const effective = isDev ? stored : config.baseUrl;
+    const effective = request.getBaseUrl() || config.baseUrl;
     this.setData({
       isDev,
       baseUrl: effective,
-      draftUrl: effective,
       baseUrlHost: hostOf(effective),
     });
     this.loadWxMode();
@@ -122,76 +110,9 @@ Page({
       .catch(() => this.setData({ demoAvailable: false }));
   },
 
-  // ---------------- 后端接口地址（仅非正式版可用） ----------------
-  editBase() {
-    if (!this.data.isDev) return; // 正式版不提供编辑入口
-    this.setData({
-      editingBase: true,
-      draftUrl: this.data.baseUrl,
-      baseTestOk: false,
-      baseTestErr: "",
-    });
-  },
-
-  cancelBaseEdit() {
-    this.setData({ editingBase: false, baseTestOk: false, baseTestErr: "" });
-  },
-
-  onBaseInput(e) {
-    this.setData({ draftUrl: e.detail.value, baseTestOk: false, baseTestErr: "" });
-  },
-
-  /** 规范化草稿地址；返回 null 表示不合法（已弹提示） */
-  normalizeDraft() {
-    const url = String(this.data.draftUrl || "")
-      .trim()
-      .replace(/\/+$/, "");
-    if (!/^https?:\/\/.+/i.test(url)) {
-      this.toast("请填写完整地址，如 http://192.168.1.5:8000/api");
-      return null;
-    }
-    return url;
-  },
-
-  /** 测连通性：临时切到草稿地址，测完无论成败都还原（只有「保存」才真正生效） */
-  testBaseUrl() {
-    const url = this.normalizeDraft();
-    if (!url) return;
-    const prev = request.getBaseUrl();
-    request.setBaseUrl(url);
-    this.setData({ baseTesting: true, baseTestOk: false, baseTestErr: "" });
-    api.auth
-      .wxMiniProgramMode()
-      .then((res) => {
-        this.setData({ baseTestOk: true, baseTestErr: "", baseMode: (res && res.mode) || "mock" });
-      })
-      .catch((err) => {
-        this.setData({ baseTestErr: (err && err.message) || "连接失败" });
-      })
-      .then(() => {
-        request.setBaseUrl(prev);
-        this.setData({ baseTesting: false });
-      });
-  },
-
-  saveBaseUrl() {
-    if (!this.data.isDev) return; // 双保险：即使被绕过 UI 也不允许改写
-    const url = this.normalizeDraft();
-    if (!url) return;
-    wx.setStorageSync(BASE_URL_KEY, url);
-    request.setBaseUrl(url);
-    this.setData({
-      baseUrl: url,
-      baseUrlHost: hostOf(url),
-      editingBase: false,
-      baseTestOk: false,
-      baseTestErr: "",
-      error: "",
-    });
-    this.toast("接口地址已保存");
-    this.loadWxMode();
-  },
-
+  // 注意：这里**没有**「改后端地址」的方法。删掉入口时一并删掉了实现，
+  // 而不是只把按钮藏起来 —— 隐藏的按钮仍可被 `bindtap` 唤起，
+  // 留着等于留一条「改地址」的后门。
   toast(msg, icon) {
     wx.showToast({ title: msg, icon: icon || "none", duration: 2000 });
   },
