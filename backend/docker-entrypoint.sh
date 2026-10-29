@@ -181,10 +181,15 @@ if [ "${MIGRATE_OK}" = "0" ]; then
   echo "[entrypoint][提醒] 数据库不可用，接口会返回 503；修好环境变量后重新部署即可。"
 fi
 
+# --preload：master 先 import 一次 Django，再 fork 出各 worker。
+# 没有它时每个 worker 各 import 一遍（Django + DRF + 全部 app 约 1~1.5 秒，
+# 小规格实例上更慢），冷启动被白白放大几倍 —— 而冷启动超过 15 秒就会撞上
+# 小程序 callContainer 的超时上限，用户看到的是「连不上后端」。
 exec gunicorn config.wsgi:application \
   --bind "0.0.0.0:${PORT}" \
   --workers "${WORKERS}" \
   --threads "${THREADS}" \
+  --preload \
   --timeout 120 \
   --graceful-timeout 30 \
   --access-logfile - \
