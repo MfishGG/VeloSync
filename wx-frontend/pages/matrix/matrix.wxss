@@ -60,14 +60,23 @@
   box-sizing: border-box;
 }
 .mcell--name {
-  width: 280rpx;
+  width: 300rpx;
   flex-direction: column;
   align-items: flex-start;
   gap: 4rpx;
   border-right: 2rpx solid var(--line-soft);
+  /* 横向滚动时把「活动」这一列钉在左边：否则滑到第三个平台就不知道这一行是谁了 */
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #fff;
+}
+.mrow--head .mcell--name {
+  background: #f8fafc;
+  z-index: 3;
 }
 .mcell--plat {
-  width: 150rpx;
+  width: 176rpx;
   justify-content: center;
   border-right: 2rpx solid var(--line-soft);
 }
@@ -75,9 +84,9 @@
   border-right: none;
 }
 .plat-name {
-  font-size: 20rpx;
+  font-size: 22rpx;
   color: var(--t2);
-  max-width: 130rpx;
+  max-width: 156rpx;
   text-align: center;
 }
 

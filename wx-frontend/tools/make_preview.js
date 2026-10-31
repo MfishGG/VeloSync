@@ -128,6 +128,8 @@ function installWx(session, user) {
     getWindowInfo: () => ({ windowWidth: 375, pixelRatio: 2 }),
     nextTick: (cb) => setImmediate(cb),
     createSelectorQuery: () => queryStub,
+    // 地图上下文：预览是静态快照，includePoints 这类只影响真机视野的调用空转即可
+    createMapContext: () => ({ includePoints: noop, moveToLocation: noop, getScale: noop }),
     createIntersectionObserver: () => ({ relativeTo: () => ({ observe: noop, disconnect: noop }), relativeToViewport: () => ({ observe: noop, disconnect: noop }) }),
     createAnimation: () => ({ step: () => ({ step: () => ({ export: () => ({}) }), export: () => ({}) }), export: () => ({}) }),
     showToast: noop, hideToast: noop, showLoading: noop, hideLoading: noop,
@@ -226,7 +228,9 @@ async function runComponent(name, props) {
 }
 
 // ---------------------------------------------------------------- WXML 解析
-const VOID_TAGS = new Set(["image", "input", "canvas", "map", "icon", "progress", "slot", "import", "include", "wxs", "br"]);
+// WXML 里真正没有闭合标签的元素。canvas / map 不在此列 —— 它们可以带子节点，
+// 当成空元素会让紧随其后的 `</canvas>` 误弹父节点（卡片提前闭合、图例跑到卡外）。
+const VOID_TAGS = new Set(["image", "input", "icon", "progress", "slot", "import", "include", "wxs", "br"]);
 
 function findTagEnd(src, lt) {
   let quote = null;
@@ -268,7 +272,18 @@ function parseWXML(src) {
     const gt = findTagEnd(src, lt);
     const inner = src.slice(lt + 1, gt);
     i = gt + 1;
-    if (inner.startsWith("/")) { if (stack.length > 1) stack.pop(); continue; }
+    if (inner.startsWith("/")) {
+      // 只有栈里真的压着同名标签时才回退，且回退到它的位置。
+      // 否则一个多余的闭合标签会把祖辈节点弹掉，整页结构就错位了。
+      const name = inner.slice(1).trim().split(/\s+/)[0];
+      for (let s = stack.length - 1; s > 0; s--) {
+        if (stack[s].tag === name) {
+          stack.length = s;
+          break;
+        }
+      }
+      continue;
+    }
     const selfClose = inner.trimEnd().endsWith("/");
     const body = selfClose ? inner.trimEnd().slice(0, -1) : inner;
     const m = /^([\w:-]+)/.exec(body.trim());

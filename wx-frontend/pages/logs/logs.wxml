@@ -31,7 +31,10 @@
     </picker>
   </view>
 
-  <view class="alert alert--danger" wx:if="{{error}}">{{error}}</view>
+  <view class="alert alert--danger" wx:if="{{error}}">
+    <view>{{error}}</view>
+    <view class="btn btn--ghost btn--sm alert__action" bindtap="reload">重新加载</view>
+  </view>
   <view class="loading" wx:if="{{loading}}"><view class="spinner"></view></view>
 
   <view class="empty" wx:if="{{!loading && list.length === 0}}">

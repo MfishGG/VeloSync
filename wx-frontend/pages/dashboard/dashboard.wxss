@@ -1,8 +1,19 @@
+/*
+ * 卡片间距用「相邻兄弟 margin」而不是 flex gap：
+ * `.page` 带 min-height:100vh，一旦把它变成 flex 列容器，这个确定高度会让子项
+ * 按 flex-shrink 被压缩 —— 卡片背景变矮、图例直接溢出到卡片外面（实测现象）。
+ * 页面本来就该由内容撑开高度，用 margin 排间距最稳。
+ */
+.page-flow > * + * {
+  margin-top: 24rpx;
+}
+
 .hello {
   display: flex;
   align-items: center;
   gap: 20rpx;
-  padding: 8rpx 8rpx 28rpx;
+  /* 下方间距交给 .page-flow 的 margin，这里再加内边距就会叠成双倍空白 */
+  padding: 8rpx 8rpx 0;
 }
 .hello__hi {
   font-size: 38rpx;

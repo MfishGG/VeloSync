@@ -14,7 +14,10 @@
     <view class="upload__hint" catchtap="goGuide">不知道怎么导入？点这里看步骤（含佳明导出方法）</view>
   </view>
 
-  <view class="alert alert--danger" wx:if="{{error}}">{{error}}</view>
+  <view class="alert alert--danger" wx:if="{{error}}">
+    <view>{{error}}</view>
+    <view class="btn btn--ghost btn--sm alert__action" bindtap="reload">重新加载</view>
+  </view>
 
   <view class="card">
     <view class="row-between">

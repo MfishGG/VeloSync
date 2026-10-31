@@ -75,3 +75,105 @@
   margin-top: 16rpx;
   overflow: hidden;
 }
+
+/* 卡片右上角的小按钮（全屏 / 全览） */
+.mini-btn {
+  font-size: 22rpx;
+  line-height: 1;
+  color: var(--primary);
+  background: var(--primary-soft);
+  border: 2rpx solid #c7d2fe;
+  border-radius: 999rpx;
+  padding: 8rpx 16rpx;
+}
+.mini-btn:active {
+  background: #e0e7ff;
+}
+
+/* ---------------- 图表全屏预览 ---------------- */
+.fs {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 99;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  background: #f8fafc;
+  padding: calc(env(safe-area-inset-top) + 12rpx) 20rpx
+    calc(env(safe-area-inset-bottom) + 12rpx);
+}
+.fs__bar {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  flex: none;
+}
+.fs__title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--t1);
+}
+.fs__modes {
+  display: flex;
+  margin-left: auto;
+  background: #e2e8f0;
+  border-radius: 12rpx;
+  padding: 4rpx;
+}
+.fs__mode {
+  font-size: 22rpx;
+  line-height: 1;
+  padding: 10rpx 18rpx;
+  border-radius: 10rpx;
+  color: var(--t2);
+}
+.fs__mode--on {
+  background: #fff;
+  color: var(--primary);
+  font-weight: 600;
+}
+.fs__close {
+  font-size: 26rpx;
+  color: var(--primary);
+  padding: 10rpx 0 10rpx 8rpx;
+}
+.fs__seg {
+  margin-top: 16rpx;
+  flex: none;
+}
+.fs__chips {
+  margin-top: 12rpx;
+  flex: none;
+}
+.fs__chart {
+  width: 100%;
+  /* 不参与 flex 收缩：画布高度由 fsChartHeight 精确给出，被压缩会让绘制尺寸与节点不符 */
+  flex: none;
+  display: block;
+  margin-top: 12rpx;
+  background: #fff;
+  border-radius: 16rpx;
+}
+.fs__pager {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 28rpx;
+  padding-top: 12rpx;
+}
+.fs__page {
+  font-size: 22rpx;
+  color: var(--t3);
+}
+.fs__hint {
+  flex: none;
+  text-align: center;
+  font-size: 20rpx;
+  color: var(--t3);
+  padding-top: 8rpx;
+}
+

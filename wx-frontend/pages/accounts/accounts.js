@@ -34,6 +34,11 @@ Page({
     this.load().then(() => wx.stopPullDownRefresh());
   },
 
+  /** 错误态的「重新加载」：先清掉旧错误，否则重试成功后红字还挂在那里 */
+  reload() {
+    this.setData({ error: "" }, () => this.load());
+  },
+
   load() {
     this.setData({ error: "" });
     return Promise.all([api.platforms.list(), api.platforms.accounts()])

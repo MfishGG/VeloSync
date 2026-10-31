@@ -56,6 +56,11 @@ Page({
     this.refresh().then(() => wx.stopPullDownRefresh());
   },
 
+  /** 错误态的「重新加载」：回到第一页重拉，并清掉旧错误提示 */
+  reload() {
+    this.setData({ error: "" }, () => this.refresh());
+  },
+
   onReachBottom() {
     if (this.data.hasMore && !this.data.loadingMore) this.loadMore();
   },

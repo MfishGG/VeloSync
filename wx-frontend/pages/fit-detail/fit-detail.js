@@ -7,8 +7,15 @@ const theme = require("../../utils/theme");
 const fmt = require("../../utils/format");
 
 const ROW_H = 64; // 分图模式每行高度（px）
+const ROW_H_FS = 108; // 全屏分图每行高度上限（屏幕放不下时按可用高度压缩）
+const ROW_MIN_FS = 76; // 全屏分图每行高度下限
 const OVERLAY_H = 210; // 叠加模式画布高度（px）
 const SPEEDS = [1, 2, 4, 8];
+
+/** 全屏时标题栏 / 维度切换条 / 页码条实际占掉的高度（px），用于算画布可用高度 */
+const FS_RESERVED = 148;
+/** 地图 fit 时四周留白（px）：不留白轨迹会贴边，看起来像被裁掉 */
+const MAP_PADDING = [56, 56, 56, 56];
 
 Page({
   data: {
@@ -30,12 +37,20 @@ Page({
     chartHeight: 400,
     chartW: 0,
     hasChart: false,
+    // 图表全屏预览
+    fullscreen: false,
+    fsRows: [], // 全屏分图当前页要画的指标
+    fsPage: 0,
+    fsPageCount: 1,
+    fsRowHeight: ROW_H_FS,
+    fsChartHeight: 0,
     // 轨迹
     hasGps: false,
     polyline: [],
     markers: [],
     mapCenter: { latitude: 0, longitude: 0 },
     includePoints: [],
+    mapScale: 14,
     playing: false,
     speedIndex: 1,
     speeds: SPEEDS,
@@ -57,6 +72,44 @@ Page({
 
   onUnload() {
     this.stopPlay();
+  },
+
+  /** 错误态的「重新加载」：本页没开下拉刷新，出错后只能靠这个按钮自救 */
+  reload() {
+    this.setData({ error: "", loading: true }, () => this.load());
+  },
+
+  onReady() {
+    if (typeof wx.createMapContext === "function") {
+      this.mapCtx = wx.createMapContext("fitMap", this);
+    }
+    // 数据可能在 onReady 之前就到了（离线缓存 / 后端很快），补一次视野自适应
+    this.fitMapToTrack();
+  },
+
+  onResize() {
+    // 横竖屏切换后画布尺寸变了，重算并重画，否则线会按旧尺寸被拉伸
+    if (this.data.fullscreen) {
+      this.applyFullscreenLayout(true);
+    } else if (this.data.detail) {
+      this.resizeChart();
+    }
+  },
+
+  /**
+   * 让地图视野贴合整条轨迹。
+   *
+   * 原来只往 include-points 里塞了一个「轨迹中心点」：单点在 map 组件里等同于
+   * 放大到极限，于是进页面看到的是一片空白底图，轨迹在视野外。改成把轨迹的
+   * 左下 / 右上两个角点交给 includePoints，并留出 padding —— 轨迹多长都能完整入画。
+   */
+  fitMapToTrack() {
+    if (this.data.hasGps === false) return;
+    const pts = this.data.includePoints || [];
+    if (pts.length < 2) return;
+    if (typeof wx.createMapContext !== "function") return;
+    if (!this.mapCtx) this.mapCtx = wx.createMapContext("fitMap", this);
+    this.mapCtx.includePoints({ points: pts, padding: MAP_PADDING });
   },
 
   load() {
@@ -85,7 +138,7 @@ Page({
           hasGps,
           simplify,
           polyline: poly,
-          includePoints: b ? [{ longitude: b.center[0], latitude: b.center[1] }] : [],
+          includePoints: b ? bboxCorners(b) : [],
           mapCenter: b ? { longitude: b.center[0], latitude: b.center[1] } : { latitude: 0, longitude: 0 },
           trackTotal: track.length,
           trackIndex: hasGps ? Math.min(track.length - 1, 0) : 0,
@@ -93,6 +146,8 @@ Page({
         });
         this.updateMarker(0);
         this.resizeChart();
+        // 等 map 渲染出这一帧再 fit，太早调 includePoints 会被随后的初始定位覆盖
+        wx.nextTick(() => setTimeout(() => this.fitMapToTrack(), 60));
       })
       .catch((err) =>
         this.setData({
@@ -136,8 +191,7 @@ Page({
 
   // ---------------- 图表尺寸 ----------------
   resizeChart() {
-    const defs = this.currentDefs();
-    const h = this.data.mode === "overlay" ? OVERLAY_H : Math.max(1, defs.length) * ROW_H;
+    const h = this.data.mode === "overlay" ? OVERLAY_H : metrics.FIT_METRICS.length * ROW_H;
     // 高度变化后需要等布局完成再取画布节点尺寸
     this.setData({ chartHeight: h }, () => {
       wx.nextTick(() => setTimeout(() => this.drawChart(), 40));
@@ -154,13 +208,19 @@ Page({
   onDimChange(e) {
     const dim = e.currentTarget.dataset.dim;
     if (dim === this.data.dim) return;
-    this.setData({ dim }, () => this.drawChart());
+    this.setData({ dim }, () => {
+      if (this.data.fullscreen) this.drawFullscreen();
+      else this.drawChart();
+    });
   },
 
   onModeChange(e) {
     const mode = e.currentTarget.dataset.mode;
     if (mode === this.data.mode) return;
-    this.setData({ mode }, () => this.resizeChart());
+    this.setData({ mode }, () => {
+      if (this.data.fullscreen) this.applyFullscreenLayout(false);
+      else this.resizeChart();
+    });
   },
 
   toggleOverlay(e) {
@@ -183,27 +243,131 @@ Page({
     }
     // 保持注册表顺序
     const ordered = metrics.FIT_METRICS.filter((m) => list.indexOf(m.key) >= 0).map((m) => m.key);
-    this.setData({ overlayKeys: ordered }, () => this.drawChart());
+    this.setData({ overlayKeys: ordered }, () => {
+      if (this.data.fullscreen) this.drawFullscreen();
+      else this.drawChart();
+    });
   },
+
+  // ---------------- 全屏预览 ----------------
+  openFullscreen() {
+    if (!this.data.detail) return;
+    this.setData({ fullscreen: true, fsPage: 0 }, () => this.applyFullscreenLayout(false));
+  },
+
+  closeFullscreen() {
+    if (!this.data.fullscreen) return;
+    this.setData({ fullscreen: false }, () => this.resizeChart());
+  },
+
+  /**
+   * 排一次全屏布局：按当前屏幕高度算「每页几行 / 画布多高」。
+   *
+   * 为什么分页而不是让 canvas 拉长放进 scroll-view：15 行 × 108px ≈ 1620px 的
+   * 原生画布在 scroll-view 里滚动会掉帧，而且滚动过程中的 canvas 重绘不可控。
+   * 分页后画布恒定等于一屏，翻页就是换一组指标重画，行为确定。
+   */
+  applyFullscreenLayout(keepPage) {
+    // 叠加模式顶部还多一排指标 chip，要多让出约 72px
+    const chipsH = this.data.mode === "overlay" ? 72 : 0;
+    const avail = Math.max(200, getWindowHeight() - FS_RESERVED - chipsH);
+    if (this.data.mode === "overlay") {
+      this.fsPer = metrics.FIT_METRICS.length;
+      this.setData(
+        {
+          fsRows: metrics.FIT_METRICS,
+          fsRowHeight: 0,
+          fsChartHeight: avail,
+          fsPageCount: 1,
+          fsPage: 0,
+        },
+        () => wx.nextTick(() => setTimeout(() => this.drawFullscreen(), 40)),
+      );
+      return;
+    }
+
+    const rowHeight = Math.min(ROW_H_FS, Math.max(ROW_MIN_FS, Math.floor(avail / 4)));
+    const per = Math.max(2, Math.floor(avail / rowHeight));
+    const defs = metrics.FIT_METRICS;
+    const pages = Math.max(1, Math.ceil(defs.length / per));
+    const page = keepPage ? Math.min(this.data.fsPage, pages - 1) : 0;
+    const rows = defs.slice(page * per, page * per + per);
+
+    this.fsPer = per;
+    this.setData(
+      {
+        fsRows: rows,
+        fsRowHeight: rowHeight,
+        fsChartHeight: rows.length * rowHeight,
+        fsPageCount: pages,
+        fsPage: page,
+      },
+      () => wx.nextTick(() => setTimeout(() => this.drawFullscreen(), 40)),
+    );
+  },
+
+  prevFsPage() {
+    this.gotoFsPage(this.data.fsPage - 1);
+  },
+
+  nextFsPage() {
+    this.gotoFsPage(this.data.fsPage + 1);
+  },
+
+  /** 翻到第 page 页（0 基），越界自动夹住 */
+  gotoFsPage(page) {
+    if (!this.fsPer || this.data.mode === "overlay") return;
+    const pages = this.data.fsPageCount;
+    const next = Math.max(0, Math.min(page, pages - 1));
+    if (next === this.data.fsPage) return;
+    const rows = metrics.FIT_METRICS.slice(next * this.fsPer, next * this.fsPer + this.fsPer);
+    this.setData(
+      { fsPage: next, fsRows: rows, fsChartHeight: rows.length * this.data.fsRowHeight },
+      () => wx.nextTick(() => setTimeout(() => this.drawFullscreen(), 40)),
+    );
+  },
+
+  /** 吞掉触摸移动：全屏层盖住页面时，别让底下的长页面跟着滑动 */
+  noop() {},
 
   // ---------------- 绘制 ----------------
   drawChart() {
-    const { detail, dim, mode, overlayKeys, chartHeight } = this.data;
+    this.paint("#fitChart", this.currentDefs(), ROW_H, false);
+  },
+
+  drawFullscreen() {
+    if (!this.data.fullscreen) return;
+    if (this.data.mode === "overlay") {
+      this.paint("#fsChart", metrics.FIT_METRICS, 0, false);
+    } else {
+      this.paint("#fsChart", this.data.fsRows, this.data.fsRowHeight, true);
+    }
+  },
+
+  /**
+   * 统一绘制入口：卡片内和全屏共用同一套绘制，只有画布选择器 / 行高 / 字号不同。
+   * @param {string} selector 画布选择器
+   * @param {Array} defs 要画的指标定义（全屏分图只画当前页）
+   * @param {number} rowHeight 行高（0 表示由函数自行决定）
+   * @param {boolean} large 是否用全屏的放大字号
+   */
+  paint(selector, defs, rowHeight, large) {
+    const { detail, dim, mode, overlayKeys } = this.data;
     if (!detail || !detail.samples) return;
-    chart.setupCanvas(this, "#fitChart").then((c) => {
+    chart.setupCanvas(this, selector).then((c) => {
       if (!c) return;
       chart.clear(c.ctx, c.width, c.height);
       if (mode === "overlay") {
         this.drawOverlay(c.ctx, c.width, c.height, overlayKeys, dim);
       } else {
-        this.drawSplit(c.ctx, c.width, c.height, dim);
+        this.drawSplit(c.ctx, c.width, c.height, dim, defs, rowHeight, large);
       }
     });
   },
 
-  drawSplit(ctx, w, h, dim) {
+  drawSplit(ctx, w, h, dim, defs, rowHeight, large) {
     const samples = this.data.detail.samples || [];
-    const rows = metrics.FIT_METRICS.map((def) => {
+    const rows = (defs || metrics.FIT_METRICS).map((def) => {
       const series = metrics.extractSeries(samples, def.key, dim);
       const range = series.length ? metrics.seriesRange(series) : null;
       return {
@@ -218,7 +382,13 @@ Page({
         emptyText: "该 FIT 文件未记录此项",
       };
     });
-    chart.drawMetricStack(ctx, w, h, rows, { rowHeight: ROW_H, dim, labelWidth: 40 });
+    chart.drawMetricStack(ctx, w, h, rows, {
+      rowHeight: rowHeight || ROW_H,
+      dim,
+      labelWidth: large ? 46 : 40,
+      font: large ? 13 : 11,
+      fontSmall: large ? 11 : 9,
+    });
   },
 
   drawOverlay(ctx, w, h, keys, dim) {
@@ -293,6 +463,32 @@ Page({
 function avgOf(series) {
   if (!series.length) return null;
   return series.reduce((s, p) => s + p[1], 0) / series.length;
+}
+
+/**
+ * 轨迹包围盒的两个对角点，交给 map 的 include-points 自动定视野。
+ *
+ * 单点会退化：map 组件对「只有一个点」的 include-points 等同于拉到最大缩放，
+ * 于是进去只看到一片底图。中心点留给 latitude/longitude，视野交给对角点。
+ */
+function bboxCorners(b) {
+  // 轨迹是直线（经度或纬度全等）时两个点会重合，补一点余量否则算不出跨度
+  const padLng = b.maxLng - b.minLng < 1e-6 ? 0.0004 : 0;
+  const padLat = b.maxLat - b.minLat < 1e-6 ? 0.0004 : 0;
+  return [
+    { longitude: b.minLng - padLng, latitude: b.minLat - padLat },
+    { longitude: b.maxLng + padLng, latitude: b.maxLat + padLat },
+  ];
+}
+
+/** 可用视口高度（px）：全屏分页算页数要用，兼容新旧基础库 */
+function getWindowHeight() {
+  try {
+    const info = wx.getWindowInfo ? wx.getWindowInfo() : wx.getSystemInfoSync();
+    return (info && info.windowHeight) || 667;
+  } catch (e) {
+    return 667;
+  }
 }
 
 function fmtFileSize(bytes) {

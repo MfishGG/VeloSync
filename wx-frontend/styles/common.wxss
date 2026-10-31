@@ -352,6 +352,10 @@ page {
   color: #047857;
   border: 2rpx solid #a7f3d0;
 }
+/* 错误提示里的操作按钮（重新加载）：贴在文案下方，不撑满整行 */
+.alert__action {
+  margin-top: 16rpx;
+}
 
 /* ---------------- 分段控件 ---------------- */
 .segment {

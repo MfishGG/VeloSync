@@ -31,6 +31,11 @@ Page({
     this.load();
   },
 
+  /** 错误态的「重新加载」：本页没开下拉刷新，出错后只能靠这个按钮自救 */
+  reload() {
+    this.setData({ error: "", loading: true }, () => this.load());
+  },
+
   load() {
     this.setData({ error: "" });
     Promise.all([api.pipelines.syncSpec(), api.pipelines.detail(this.data.id)])

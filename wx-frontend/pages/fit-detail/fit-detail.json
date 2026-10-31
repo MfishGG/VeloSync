@@ -1,4 +1,5 @@
 {
   "navigationBarTitleText": "FIT 详情",
-  "usingComponents": {}
+  "usingComponents": {},
+  "pageOrientation": "auto"
 }

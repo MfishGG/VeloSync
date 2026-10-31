@@ -394,6 +394,10 @@ function drawMetricStack(ctx, w, h, rows, opt) {
   const o = opt || {};
   const rowH = o.rowHeight || 64;
   const dim = o.dim || "time";
+  // 字号默认按「卡片内 15 行」的紧凑排版取；全屏预览会传更大的值
+  const font = o.font || 11;
+  const fontSmall = o.fontSmall || 9;
+  const labelW = o.labelWidth || 40;
 
   (rows || []).forEach((row, i) => {
     const top = i * rowH;
@@ -404,10 +408,10 @@ function drawMetricStack(ctx, w, h, rows, opt) {
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
     ctx.fillStyle = row.color || "#4f46e5";
-    ctx.font = "bold 11px sans-serif";
+    ctx.font = `bold ${font}px sans-serif`;
     ctx.fillText(row.label, 0, top + 2);
     ctx.fillStyle = "#94a3b8";
-    ctx.font = "9px sans-serif";
+    ctx.font = `${fontSmall}px sans-serif`;
     let rangeText = row.unit || "";
     if (has) {
       let min = row.series[0][1];
@@ -418,12 +422,12 @@ function drawMetricStack(ctx, w, h, rows, opt) {
       });
       rangeText = `${fmtTick(min)}~${fmtTick(max)} ${row.unit || ""}`;
     }
-    ctx.fillText(rangeText, String(row.label).length * 12 + 6, top + 4);
+    ctx.fillText(rangeText, String(row.label).length * (font + 1) + 6, top + 4);
     ctx.restore();
 
     const box = {
-      left: o.labelWidth || 40,
-      top: top + 18,
+      left: labelW,
+      top: top + font + 7,
       right: w - 8,
       bottom: top + rowH - 6,
     };

@@ -30,6 +30,32 @@ Page({
     this.load().then(() => wx.stopPullDownRefresh());
   },
 
+  /** 错误态的「重新加载」：错误提示只是一行红字时，用户不知道该干什么 */
+  reload() {
+    this.setData({ loading: true }, () => this.load());
+  },
+
+  onShareAppMessage() {
+    const u = this.data.user || {};
+    const name = u.nickname || u.username || "我";
+    const s = this.data.stats || {};
+    return {
+      title: s.total_activities
+        ? `${name} 已在 VeloSync 汇总 ${s.total_activities} 条运动记录`
+        : "VeloSync 速同 · 跨平台运动数据同步",
+      path: "/pages/dashboard/dashboard",
+    };
+  },
+
+  onShareTimeline() {
+    const s = this.data.stats || {};
+    return {
+      title: s.total_activities
+        ? `已汇总 ${s.total_activities} 条运动记录 · 同步率 ${s.sync_rate}%`
+        : "VeloSync 速同 · 跨平台运动数据同步",
+    };
+  },
+
   load() {
     this.setData({ error: "" });
     return api.dashboard
