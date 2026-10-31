@@ -1,6 +1,10 @@
 <view class="fsp">
-  <!-- 横屏下不用原生导航栏（会占掉本就不多的高度），自己画一条紧凑的操作条 -->
-  <view class="fsp__bar">
+  <!--
+    横屏下不用原生导航栏（会占掉本就不多的高度），自己画一条紧凑的操作条。
+    右侧要按胶囊实测位置留白：navigationStyle: custom 只是不画返回箭头/标题，
+    右上角那两颗系统按钮照样浮在窗口右上，压上来正好盖住「时间/距离」切换。
+  -->
+  <view class="fsp__bar" style="height:{{barH}}px;padding-right:{{capRight}}px">
     <view class="fsp__back" bindtap="goBack">‹ 返回</view>
     <view class="fsp__title">{{label}}</view>
     <text class="fsp__range" wx:if="{{rangeText}}">{{rangeText}}</text>
@@ -20,13 +24,10 @@
     </view>
   </view>
 
-  <view class="loading" wx:if="{{loading}}"><view class="spinner"></view></view>
-  <view class="alert alert--danger" wx:if="{{error}}">{{error}}</view>
-  <canvas
-    wx:if="{{!loading && !error}}"
-    type="2d"
-    id="fsChart"
-    class="fsp__chart"
-    style="height:{{chartH}}px"
-  ></canvas>
+  <!-- 画布高度由这里的 flex 撑满，JS 只量不猜（详见 fit-metric.js 顶部注释） -->
+  <view class="fsp__body">
+    <view class="loading" wx:if="{{loading}}"><view class="spinner"></view></view>
+    <view class="alert alert--danger" wx:if="{{error}}">{{error}}</view>
+    <canvas wx:if="{{!loading && !error}}" type="2d" id="fsChart" class="fsp__chart"></canvas>
+  </view>
 </view>

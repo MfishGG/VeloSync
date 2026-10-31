@@ -208,6 +208,50 @@ test("单图全屏：刻度字号跟随放大，最末时间标签右对齐且�
   assert(maxY <= 788, `时间轴标签画到画布外（y=${maxY}）`);
 });
 
+test("单图全屏 title:false：不重复画指标名，顶部留白让给曲线", () => {
+  const ctx = mockCtx();
+  const def = metrics.FIT_METRICS.filter((d) => d.key === "heart_rate")[0];
+  const series = metrics.extractSeries(samples, "heart_rate", "time");
+  // 852x347 就是横屏页的真实可用尺寸
+  chart.drawMetricStack(
+    ctx,
+    852,
+    347,
+    [{ label: def.label, unit: def.unit, color: def.color, fill: def.fill, kind: def.kind, series, avg: 20 }],
+    {
+      rowHeight: 347,
+      dim: "time",
+      title: false,
+      labelWidth: 56,
+      font: 15,
+      fontSmall: 12,
+      xTickCount: 8,
+      yTickCount: 5,
+      bottomPad: 22,
+    },
+  );
+
+  const t = texts(ctx.calls);
+  assert(t.indexOf(def.label) < 0, "title:false 时画布内不应再画指标名");
+  assert(!t.some((x) => x.indexOf("bpm") >= 0), "title:false 时不应再画幅度文本");
+
+  // 网格横线从 box.left 起笔；box.top 是所有横线里最靠上的那条 y
+  // （刻度值升序画，但屏幕 y 轴向下，所以第一条是 box.bottom）
+  const firstGridY = Math.min.apply(
+    null,
+    ctx.calls
+      .filter((c) => c.name === "moveTo" && Math.abs(Number(c.args[0]) - 56) < 0.01)
+      .map((c) => Number(c.args[1])),
+  );
+  assert(firstGridY === 8, `box.top 应为 8，实际 ${firstGridY}`);
+
+  const timeYs = ctx.calls
+    .filter((c) => c.name === "fillText" && /^\d{1,2}:\d{2}$/.test(String(c.args[0])))
+    .map((c) => Number(c.args[2]));
+  assert(timeYs.length > 0, "没有画出时间轴标签");
+  assert(Math.max.apply(null, timeYs) <= 347, `时间轴标签画到画布外（y=${Math.max.apply(null, timeYs)}）`);
+});
+
 test("drawMetricRow 数据全空时也不报错", () => {
   const ctx = mockCtx();
   chart.drawMetricRow(

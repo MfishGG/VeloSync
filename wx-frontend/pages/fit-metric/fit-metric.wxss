@@ -1,12 +1,16 @@
 /*
  * 横屏专用页。
  *
- * 两个约定：
+ * 三个约定：
  * 1. 尺寸一律用 px 而不是 rpx —— rpx 按屏幕宽度换算，横屏 844 宽时 24rpx ≈ 27px，
  *    竖屏那套字号会整体放大，这条操作条就挤了。
  * 2. 类名全部带 fsp 前缀、不复用 .page / .bar / .chart。common.wxss 里已有 .bar
  *    （position:absolute）和 .page（padding + min-height），撞上会把整条操作条
  *    推到页面底部。
+ * 3. 画布高度**不写死也不由 JS 算**，交给 .fsp__body 的 flex 撑满：横屏下
+ *    wx.getWindowInfo().windowHeight 在部分机型仍返回竖屏高度（852 而不是 393），
+ *    按它算出来的画布会高过整个屏幕，底部时间轴被推到屏幕外。CSS 的 100vh
+ *    是准的，跟着布局走，绘制时再量实际像素。
  */
 .fsp {
   display: flex;
@@ -14,7 +18,6 @@
   height: 100vh;
   box-sizing: border-box;
   background: #fff;
-  /* 画布高度是「窗口高 - 46px」，条本身含 1px 下边框，防这点溢出带出滚动条 */
   overflow: hidden;
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
@@ -22,7 +25,9 @@
 
 .fsp__bar {
   flex: none;
+  /* 高度与右内边距由 wxml 内联样式覆盖：按胶囊实测位置算，46px / 留白是兜底 */
   height: 46px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -30,20 +35,28 @@
   border-bottom: 1px solid var(--line-soft);
 }
 .fsp__back {
+  flex: none;
   font-size: 14px;
   color: var(--primary);
   padding: 4px 2px;
 }
 .fsp__title {
+  flex: none;
   font-size: 16px;
   font-weight: 600;
   color: var(--t1);
 }
 .fsp__range {
+  /* 指标名长 / 窗口窄时宁可省略，也别把右侧的维度切换挤出可视区 */
+  min-width: 0;
   font-size: 12px;
   color: var(--t3);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .fsp__seg {
+  flex: none;
   margin-left: auto;
   display: flex;
   background: #eef2f7;
@@ -63,8 +76,17 @@
   font-weight: 600;
 }
 
+.fsp__body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
 .fsp__chart {
-  width: 100%;
+  /* 四边贴住 body：绝对定位定死尺寸，不依赖百分比高度能不能解析 */
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
   display: block;
-  flex: none;
 }

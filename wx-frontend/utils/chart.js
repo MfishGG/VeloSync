@@ -29,6 +29,26 @@ function setupCanvas(component, selector) {
   });
 }
 
+/**
+ * 只量画布尺寸，不改缓冲区。
+ *
+ * 用于「排版变了没有」的复测：画布高度交给 CSS 布局后，JS 不再自己算高度，
+ * 转屏 / 首帧时机不对时靠它发现实际尺寸和上次绘制用的不一致，再补一次重绘。
+ */
+function measure(component, selector) {
+  return new Promise((resolve) => {
+    component
+      .createSelectorQuery()
+      .select(selector)
+      .fields({ size: true })
+      .exec((res) => {
+        const item = res && res[0];
+        if (!item || !item.width || !item.height) return resolve(null);
+        resolve({ width: item.width, height: item.height });
+      });
+  });
+}
+
 function clear(ctx, w, h) {
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = "#ffffff";
@@ -393,7 +413,10 @@ function drawOverlayChart(ctx, w, h, list, opt) {
  * 分图模式：每个指标各占一行（没有数据的指标仍保留空白图位）
  *
  * @param {Array} rows [{ label, unit, color, fill, kind, blank, series, avg, emptyText }]
- * @param {object} opt { rowHeight, dim, labelWidth, font, fontSmall, xTickCount, yTickCount, bottomPad }
+ * @param {object} opt { rowHeight, dim, labelWidth, font, fontSmall, xTickCount, yTickCount,
+ *                       bottomPad, title }
+ *   title: false 时不画行标题（单图全屏页已经把指标名与幅度放在操作条上，
+ *   画布内再画一遍既重复又白占顶部 20 多像素）
  */
 function drawMetricStack(ctx, w, h, rows, opt) {
   const o = opt || {};
@@ -406,36 +429,41 @@ function drawMetricStack(ctx, w, h, rows, opt) {
   // 时间轴标签画在 box 底边之下。卡片里每行下面还有下一行可以「借位」，
   // 单图全屏时最后一行下面就是画布边缘，必须自己留出这段空间，否则标签被裁。
   const bottomPad = o.bottomPad || 0;
+  const showTitle = o.title !== false;
+  // 没有行标题时顶部只需一点点留白（刻度文字的半高）
+  const topPad = showTitle ? font + 7 : 8;
 
   (rows || []).forEach((row, i) => {
     const top = i * rowH;
     const has = row.series && row.series.length > 0;
 
-    // 行标题
-    ctx.save();
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    ctx.fillStyle = row.color || "#4f46e5";
-    ctx.font = `bold ${font}px sans-serif`;
-    ctx.fillText(row.label, 0, top + 2);
-    ctx.fillStyle = "#94a3b8";
-    ctx.font = `${fontSmall}px sans-serif`;
-    let rangeText = row.unit || "";
-    if (has) {
-      let min = row.series[0][1];
-      let max = row.series[0][1];
-      row.series.forEach((p) => {
-        if (p[1] < min) min = p[1];
-        if (p[1] > max) max = p[1];
-      });
-      rangeText = `${fmtTick(min)}~${fmtTick(max)} ${row.unit || ""}`;
+    if (showTitle) {
+      // 行标题
+      ctx.save();
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.fillStyle = row.color || "#4f46e5";
+      ctx.font = `bold ${font}px sans-serif`;
+      ctx.fillText(row.label, 0, top + 2);
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = `${fontSmall}px sans-serif`;
+      let rangeText = row.unit || "";
+      if (has) {
+        let min = row.series[0][1];
+        let max = row.series[0][1];
+        row.series.forEach((p) => {
+          if (p[1] < min) min = p[1];
+          if (p[1] > max) max = p[1];
+        });
+        rangeText = `${fmtTick(min)}~${fmtTick(max)} ${row.unit || ""}`;
+      }
+      ctx.fillText(rangeText, String(row.label).length * (font + 1) + 6, top + 4);
+      ctx.restore();
     }
-    ctx.fillText(rangeText, String(row.label).length * (font + 1) + 6, top + 4);
-    ctx.restore();
 
     const box = {
       left: labelW,
-      top: top + font + 7,
+      top: top + topPad,
       right: w - 8,
       bottom: top + rowH - 6 - bottomPad,
     };
@@ -468,6 +496,7 @@ function drawMetricStack(ctx, w, h, rows, opt) {
 
 module.exports = {
   setupCanvas,
+  measure,
   clear,
   niceRange,
   ticks,
