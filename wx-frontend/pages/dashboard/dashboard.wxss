@@ -3,8 +3,12 @@
  * `.page` 带 min-height:100vh，一旦把它变成 flex 列容器，这个确定高度会让子项
  * 按 flex-shrink 被压缩 —— 卡片背景变矮、图例直接溢出到卡片外面（实测现象）。
  * 页面本来就该由内容撑开高度，用 margin 排间距最稳。
+ *
+ * 注意这里写的是 `view + view` 而不是 `* + *`：WXSS 不支持通配选择器（编译期
+ * 报 error at token `*`）。本页直接子节点全是 view（含 block 展开后的卡片），
+ * 用标签选择器等价。
  */
-.page-flow > * + * {
+.page-flow > view + view {
   margin-top: 24rpx;
 }
 

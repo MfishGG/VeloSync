@@ -73,7 +73,37 @@ for (const f of jsonFiles) {
 }
 if (!jsonBad) ok(`${jsonFiles.length} 个文件`, "全部合法");
 
-// ---------------------------------------------------------------- 3. 页面四件套
+// ---------------------------------------------------------------- 3. WXSS 可编译性
+// WXSS 不是标准 CSS：通配选择器 `*` 会在编译期直接报错（error at token `*`），
+// 而它恰恰很容易被当成「选中所有子元素」的通用写法写进去。本地校验一下，
+// 免得等到开发者工具编译才发现。
+group("WXSS 可编译性");
+const wxssFiles = walk(ROOT, (f) => f.endsWith(".wxss"));
+// 前面是行首/空白/组合符，后面跟空白、逗号、组合符或选择器起始字符
+const WILDCARD = /(^|[\s,>+~])\*(?=[\s,{.:>+~#[]|$)/;
+let wxssBad = 0;
+for (const f of wxssFiles) {
+  const raw = fs.readFileSync(f, "utf8");
+  // 注释替换成等长空白（保留换行），这样报出来的行号与原文件一致
+  const src = raw.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
+  let start = 0;
+  for (let i = 0; i < src.length; i++) {
+    if (src[i] !== "{") continue;
+    // 选择器文本取到最后一个 `;` 之后：前面可能是上一个块的声明，不该参与匹配
+    const seg = src.slice(start, i);
+    const selector = seg.slice(seg.lastIndexOf(";") + 1);
+    if (WILDCARD.test(selector)) {
+      const line = src.slice(0, i).split("\n").length;
+      const shown = selector.trim().split("\n").pop().trim().replace(/\s+/g, " ");
+      wxssBad++;
+      bad(`${path.relative(ROOT, f).replace(/\\/g, "/")}:${line}`, `WXSS 不支持通配选择器 \`*\`（${shown}）`);
+    }
+    start = i + 1;
+  }
+}
+if (!wxssBad) ok(`${wxssFiles.length} 个文件`, "选择器语法可用");
+
+// ---------------------------------------------------------------- 4. 页面四件套
 group("页面四件套");
 const appJson = JSON.parse(fs.readFileSync(path.join(ROOT, "app.json"), "utf8"));
 const declared = appJson.pages.map((p) => p.split("/")[1]);
@@ -102,7 +132,7 @@ if (notDeclared.length || missingDir.length) {
   ok("app.json 与 pages/", "一一对应");
 }
 
-// ---------------------------------------------------------------- 4. 图标资产
+// ---------------------------------------------------------------- 5. 图标资产
 group("图标资产");
 const iconFiles = [];
 for (const t of appJson.tabBar.list) {
@@ -132,7 +162,7 @@ for (const rel of brandFiles) {
 }
 if (!brandBad) ok(`品牌 ${brandFiles.length} 个`, "齐备");
 
-// ---------------------------------------------------------------- 5. 事件绑定
+// ---------------------------------------------------------------- 6. 事件绑定
 group("WXML 事件绑定");
 let handlerBad = 0;
 let handlerCount = 0;
