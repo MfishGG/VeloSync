@@ -168,6 +168,46 @@ test("drawMetricStack 绘制 15 行且无数据行给出空白提示", () => {
   assert(count(ctx.calls, "stroke") > 0 || count(ctx.calls, "lineTo") > 0, "没有任何线条被绘制");
 });
 
+test("单图全屏：刻度字号跟随放大，最末时间标签右对齐且不落到画布外", () => {
+  const ctx = mockCtx();
+  const def = metrics.FIT_METRICS.filter((d) => d.key === "heart_rate")[0];
+  const series = metrics.extractSeries(samples, "heart_rate", "time");
+  const row = {
+    label: def.label,
+    unit: def.unit,
+    color: def.color,
+    fill: def.fill,
+    kind: def.kind,
+    series,
+    avg: 20,
+    emptyText: "该 FIT 文件未记录此项",
+  };
+
+  chart.drawMetricStack(ctx, 375, 788, [row], {
+    rowHeight: 788,
+    dim: "time",
+    labelWidth: 52,
+    font: 15,
+    fontSmall: 12,
+    xTickCount: 6,
+    yTickCount: 5,
+    bottomPad: 22,
+  });
+
+  // 刻度字号曾写死 9px，导致全屏下标题放大、刻度还是小字
+  assert(/^12px/.test(String(ctx.font)), `刻度字号应为 12px，实际 ${ctx.font}`);
+  // 最后一个时间标签落在 box.right 上，居中会把右半边画到画布外
+  assert(ctx.textAlign === "right", `最后一个时间标签应右对齐，实际 ${ctx.textAlign}`);
+
+  const timeYs = ctx.calls
+    .filter((c) => c.name === "fillText" && /^\d{1,2}:\d{2}$/.test(String(c.args[0])))
+    .map((c) => Number(c.args[2]));
+  assert(timeYs.length > 0, "没有画出时间轴标签");
+  const maxY = Math.max.apply(null, timeYs);
+  // bottomPad 就是给这段标签留的空间：越界说明单图全屏会把时间轴裁掉
+  assert(maxY <= 788, `时间轴标签画到画布外（y=${maxY}）`);
+});
+
 test("drawMetricRow 数据全空时也不报错", () => {
   const ctx = mockCtx();
   chart.drawMetricRow(

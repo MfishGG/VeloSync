@@ -91,19 +91,37 @@
         </view>
       </view>
 
-      <canvas
-        type="2d"
-        id="fitChart"
-        class="chart"
-        style="height:{{chartHeight}}px"
-        bindtap="openFullscreen"
-      ></canvas>
+      <view class="chart-wrap" style="height:{{chartHeight}}px">
+        <canvas
+          type="2d"
+          id="fitChart"
+          class="chart"
+          style="height:{{chartHeight}}px"
+          bindtap="openFullscreen"
+        ></canvas>
+
+        <!--
+          每幅图右下角的全屏按钮。canvas 画的内容点不到具体某一行，所以按钮是
+          盖在画布上的绝对定位 view，纵向按 rowH 等分行高对齐。
+        -->
+        <block wx:if="{{mode === 'split'}}">
+          <view
+            class="rowfs"
+            wx:for="{{metricDefs}}"
+            wx:key="key"
+            style="top:{{index * rowH + rowH - 30}}px"
+            data-key="{{item.key}}"
+            catchtap="openMetricFullscreen"
+            >⛶</view
+          >
+        </block>
+      </view>
 
       <view class="t-xs t3" style="margin-top:12rpx" wx:if="{{mode === 'overlay'}}">
         叠加模式下每个指标按自身极值归一化到 0~100%，因此纵轴只表示相对变化；虚线为各自平均值。
       </view>
       <view class="t-xs t3" style="margin-top:12rpx" wx:else>
-        虚线为该指标的全程平均值；无数据的指标保留空白图位（预留）。点图表或右上「全屏」可放大看。
+        虚线为该指标的全程平均值。点每幅图右下角「⛶」可横屏全屏看单条曲线。
       </view>
     </view>
 
@@ -175,7 +193,7 @@
     </view>
   </block>
 
-  <!-- 图表全屏预览 -->
+  <!-- 图表全屏预览（整卡：分指标分页 / 叠加）。单幅图另走横屏页 -->
   <view class="fs" wx:if="{{fullscreen}}" catchtouchmove="noop">
     <view class="fs__bar">
       <text class="fs__title">数据曲线</text>

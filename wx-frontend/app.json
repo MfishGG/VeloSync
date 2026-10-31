@@ -8,6 +8,7 @@
     "pages/matrix/matrix",
     "pages/fit/fit",
     "pages/fit-detail/fit-detail",
+    "pages/fit-metric/fit-metric",
     "pages/mine/mine",
     "pages/accounts/accounts",
     "pages/logs/logs",

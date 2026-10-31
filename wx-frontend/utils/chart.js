@@ -66,7 +66,8 @@ function drawGrid(ctx, box, xTicks, yTicks, opt) {
   ctx.save();
   ctx.strokeStyle = o.gridColor || "#eef2f7";
   ctx.lineWidth = 1;
-  ctx.font = "9px sans-serif";
+  // 刻度字号跟随调用方（单图全屏会放大），默认仍是卡片里的 9px
+  ctx.font = `${o.fontSize || 9}px sans-serif`;
   ctx.fillStyle = o.tickColor || "#94a3b8";
 
   // 横向网格 + Y 轴刻度
@@ -82,15 +83,18 @@ function drawGrid(ctx, box, xTicks, yTicks, opt) {
   });
 
   // 纵向网格 + X 轴刻度
-  xTicks.forEach((v) => {
+  const lastX = xTicks.length - 1;
+  xTicks.forEach((v, i) => {
     const x = o.xScale(v);
     ctx.beginPath();
     ctx.moveTo(x, box.top);
     ctx.lineTo(x, box.bottom);
     ctx.stroke();
-    ctx.textAlign = "center";
+    // 最后一个刻度落在 box.right 上，居中会把右半边画到画布外，改成右对齐
+    ctx.textAlign = i === lastX ? "right" : "center";
     ctx.textBaseline = "top";
-    ctx.fillText(o.xFormat ? o.xFormat(v) : fmtTick(v), x, box.bottom + 4);
+    const tx = i === lastX ? Math.min(box.right, x) : x;
+    ctx.fillText(o.xFormat ? o.xFormat(v) : fmtTick(v), tx, box.bottom + 4);
   });
   ctx.restore();
 }
@@ -168,12 +172,13 @@ function drawMetricRow(ctx, box, series, cfg) {
   const yScale = (v) =>
     box.bottom - ((v - yRange[0]) / (yRange[1] - yRange[0] || 1)) * (box.bottom - box.top);
 
-  const xTicks = ticks(xMin, xMax, 3);
-  const yTicks = ticks(yRange[0], yRange[1], 2);
+  const xTicks = ticks(xMin, xMax, c.xTickCount || 3);
+  const yTicks = ticks(yRange[0], yRange[1], c.yTickCount || 2);
 
   drawGrid(ctx, box, xTicks, yTicks, {
     xScale,
     yScale,
+    fontSize: c.fontSmall,
     yFormat: (v) => fmtTick(v),
     xFormat: (v) =>
       c.dim === "distance" ? `${Number(v).toFixed(1)}` : fmtTimeAxis(v),
@@ -388,7 +393,7 @@ function drawOverlayChart(ctx, w, h, list, opt) {
  * 分图模式：每个指标各占一行（没有数据的指标仍保留空白图位）
  *
  * @param {Array} rows [{ label, unit, color, fill, kind, blank, series, avg, emptyText }]
- * @param {object} opt { rowHeight, dim, labelWidth }
+ * @param {object} opt { rowHeight, dim, labelWidth, font, fontSmall, xTickCount, yTickCount, bottomPad }
  */
 function drawMetricStack(ctx, w, h, rows, opt) {
   const o = opt || {};
@@ -398,6 +403,9 @@ function drawMetricStack(ctx, w, h, rows, opt) {
   const font = o.font || 11;
   const fontSmall = o.fontSmall || 9;
   const labelW = o.labelWidth || 40;
+  // 时间轴标签画在 box 底边之下。卡片里每行下面还有下一行可以「借位」，
+  // 单图全屏时最后一行下面就是画布边缘，必须自己留出这段空间，否则标签被裁。
+  const bottomPad = o.bottomPad || 0;
 
   (rows || []).forEach((row, i) => {
     const top = i * rowH;
@@ -429,7 +437,7 @@ function drawMetricStack(ctx, w, h, rows, opt) {
       left: labelW,
       top: top + font + 7,
       right: w - 8,
-      bottom: top + rowH - 6,
+      bottom: top + rowH - 6 - bottomPad,
     };
     drawMetricRow(ctx, box, row.series, {
       color: row.color,
@@ -439,6 +447,11 @@ function drawMetricStack(ctx, w, h, rows, opt) {
       dim,
       avg: row.avg,
       emptyText: row.emptyText || "该 FIT 文件未记录此项",
+      // 单图全屏时一行铺满整屏，2 条横线太稀疏，调用方会传更大的值
+      xTickCount: o.xTickCount,
+      yTickCount: o.yTickCount,
+      // 刻度字号跟行标题的小字走，避免全屏下标题放大、刻度还是 9px
+      fontSmall,
     });
 
     // 行分隔

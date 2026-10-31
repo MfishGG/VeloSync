@@ -37,7 +37,9 @@ Page({
     chartHeight: 400,
     chartW: 0,
     hasChart: false,
-    // 图表全屏预览
+    // 卡片内每行图的行高：WXML 用它在每幅图右下角定位「全屏」按钮
+    rowH: ROW_H,
+    // 图表全屏预览（整卡：分指标分页 / 叠加）
     fullscreen: false,
     fsRows: [], // 全屏分图当前页要画的指标
     fsPage: 0,
@@ -261,6 +263,24 @@ Page({
   },
 
   /**
+   * 单幅图全屏：跳独立的横屏页。
+   *
+   * 小程序没有运行时强制横屏的 API，只能靠页面 json 配 pageOrientation: landscape，
+   * 所以「点一下就是横屏」必须借一个单独的页面。detail 通过 eventChannel 递过去，
+   * 目标页不用再请求一次 FIT 解析结果。
+   */
+  openMetricFullscreen(e) {
+    if (!this.data.detail) return;
+    const key = e.currentTarget.dataset.key;
+    wx.navigateTo({
+      url: `/pages/fit-metric/fit-metric?id=${this.data.id}&key=${key}&dim=${this.data.dim}`,
+      success: (res) => {
+        if (res && res.eventChannel) res.eventChannel.emit("fitDetail", { detail: this.data.detail });
+      },
+    });
+  },
+
+  /**
    * 排一次全屏布局：按当前屏幕高度算「每页几行 / 画布多高」。
    *
    * 为什么分页而不是让 canvas 拉长放进 scroll-view：15 行 × 108px ≈ 1620px 的
@@ -350,8 +370,9 @@ Page({
    * @param {Array} defs 要画的指标定义（全屏分图只画当前页）
    * @param {number} rowHeight 行高（0 表示由函数自行决定）
    * @param {boolean} large 是否用全屏的放大字号
+   * @param {object} [extra] 额外绘制选项（如刻度数量）
    */
-  paint(selector, defs, rowHeight, large) {
+  paint(selector, defs, rowHeight, large, extra) {
     const { detail, dim, mode, overlayKeys } = this.data;
     if (!detail || !detail.samples) return;
     chart.setupCanvas(this, selector).then((c) => {
@@ -360,12 +381,12 @@ Page({
       if (mode === "overlay") {
         this.drawOverlay(c.ctx, c.width, c.height, overlayKeys, dim);
       } else {
-        this.drawSplit(c.ctx, c.width, c.height, dim, defs, rowHeight, large);
+        this.drawSplit(c.ctx, c.width, c.height, dim, defs, rowHeight, large, extra);
       }
     });
   },
 
-  drawSplit(ctx, w, h, dim, defs, rowHeight, large) {
+  drawSplit(ctx, w, h, dim, defs, rowHeight, large, extra) {
     const samples = this.data.detail.samples || [];
     const rows = (defs || metrics.FIT_METRICS).map((def) => {
       const series = metrics.extractSeries(samples, def.key, dim);
@@ -382,12 +403,17 @@ Page({
         emptyText: "该 FIT 文件未记录此项",
       };
     });
+    // 单图铺满时行高远大于全屏分栏，字号再提一档，否则大片留白配小字
+    const big = rowHeight && rowHeight >= 160;
     chart.drawMetricStack(ctx, w, h, rows, {
       rowHeight: rowHeight || ROW_H,
       dim,
-      labelWidth: large ? 46 : 40,
-      font: large ? 13 : 11,
-      fontSmall: large ? 11 : 9,
+      labelWidth: big ? 52 : large ? 46 : 40,
+      font: big ? 15 : large ? 13 : 11,
+      fontSmall: big ? 12 : large ? 11 : 9,
+      xTickCount: extra && extra.xTickCount,
+      yTickCount: extra && extra.yTickCount,
+      bottomPad: extra && extra.bottomPad,
     });
   },
 

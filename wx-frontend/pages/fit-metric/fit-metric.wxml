@@ -1,0 +1,32 @@
+<view class="fsp">
+  <!-- 横屏下不用原生导航栏（会占掉本就不多的高度），自己画一条紧凑的操作条 -->
+  <view class="fsp__bar">
+    <view class="fsp__back" bindtap="goBack">‹ 返回</view>
+    <view class="fsp__title">{{label}}</view>
+    <text class="fsp__range" wx:if="{{rangeText}}">{{rangeText}}</text>
+    <view class="fsp__seg">
+      <view
+        class="fsp__seg-item {{dim === 'time' ? 'fsp__seg-item--on' : ''}}"
+        data-dim="time"
+        bindtap="onDim"
+        >时间</view
+      >
+      <view
+        class="fsp__seg-item {{dim === 'distance' ? 'fsp__seg-item--on' : ''}}"
+        data-dim="distance"
+        bindtap="onDim"
+        >距离</view
+      >
+    </view>
+  </view>
+
+  <view class="loading" wx:if="{{loading}}"><view class="spinner"></view></view>
+  <view class="alert alert--danger" wx:if="{{error}}">{{error}}</view>
+  <canvas
+    wx:if="{{!loading && !error}}"
+    type="2d"
+    id="fsChart"
+    class="fsp__chart"
+    style="height:{{chartH}}px"
+  ></canvas>
+</view>

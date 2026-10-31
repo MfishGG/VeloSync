@@ -1,0 +1,70 @@
+/*
+ * 横屏专用页。
+ *
+ * 两个约定：
+ * 1. 尺寸一律用 px 而不是 rpx —— rpx 按屏幕宽度换算，横屏 844 宽时 24rpx ≈ 27px，
+ *    竖屏那套字号会整体放大，这条操作条就挤了。
+ * 2. 类名全部带 fsp 前缀、不复用 .page / .bar / .chart。common.wxss 里已有 .bar
+ *    （position:absolute）和 .page（padding + min-height），撞上会把整条操作条
+ *    推到页面底部。
+ */
+.fsp {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  box-sizing: border-box;
+  background: #fff;
+  /* 画布高度是「窗口高 - 46px」，条本身含 1px 下边框，防这点溢出带出滚动条 */
+  overflow: hidden;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+.fsp__bar {
+  flex: none;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.fsp__back {
+  font-size: 14px;
+  color: var(--primary);
+  padding: 4px 2px;
+}
+.fsp__title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--t1);
+}
+.fsp__range {
+  font-size: 12px;
+  color: var(--t3);
+}
+.fsp__seg {
+  margin-left: auto;
+  display: flex;
+  background: #eef2f7;
+  border-radius: 7px;
+  padding: 2px;
+}
+.fsp__seg-item {
+  font-size: 12px;
+  line-height: 1;
+  padding: 6px 12px;
+  border-radius: 5px;
+  color: var(--t2);
+}
+.fsp__seg-item--on {
+  background: #fff;
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.fsp__chart {
+  width: 100%;
+  display: block;
+  flex: none;
+}
