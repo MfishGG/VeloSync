@@ -82,11 +82,15 @@
   min-height: 0;
 }
 .fsp__chart {
-  /* 四边贴住 body：绝对定位定死尺寸，不依赖百分比高度能不能解析 */
+  /*
+   * canvas 是「替换元素」：绝对定位时如果 width/height 是 auto，宽度会取内部固有
+   * 尺寸（300×150），把 left/right/top/bottom 全给上也照样被忽略 —— 画布会缩成
+   * 左上角一块小图。所以百分比宽高必须显式写出来，不能只靠四边定位。
+   */
   position: absolute;
   left: 0;
-  right: 0;
   top: 0;
-  bottom: 0;
+  width: 100%;
+  height: 100%;
   display: block;
 }

@@ -252,6 +252,21 @@ test("单图全屏 title:false：不重复画指标名，顶部留白让给曲�
   assert(Math.max.apply(null, timeYs) <= 347, `时间轴标签画到画布外（y=${Math.max.apply(null, timeYs)}）`);
 });
 
+test("纵轴不出现负刻度（8% 留白曾把速度轴拉到 -3.3）", () => {
+  const ctx = mockCtx();
+  // 全 0 起步的速度数据：min=0，留白后 niceRange 会给负下界
+  const series = [];
+  for (let i = 0; i < 60; i += 1) series.push([i, i < 30 ? 0 : (i - 30) * 0.8]);
+  chart.drawMetricRow(
+    ctx,
+    { left: 40, top: 18, right: 300, bottom: 60 },
+    series,
+    { color: "#0ea5e9", fill: "#e0f2fe", kind: "area", dim: "time", yTickCount: 5 },
+  );
+  const neg = texts(ctx.calls).filter((t) => /^-/.test(t));
+  assert(neg.length === 0, `纵轴出现负刻度：${neg.join(",")}`);
+});
+
 test("drawMetricRow 数据全空时也不报错", () => {
   const ctx = mockCtx();
   chart.drawMetricRow(

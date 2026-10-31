@@ -103,7 +103,60 @@ for (const f of wxssFiles) {
 }
 if (!wxssBad) ok(`${wxssFiles.length} 个文件`, "选择器语法可用");
 
-// ---------------------------------------------------------------- 4. 页面四件套
+// ---------------------------------------------------------------- 4. 画布尺寸
+// canvas 是「替换元素」：width / height 为 auto 时取内部固有尺寸 300×150。
+// 所以「position:absolute + left/right/top/bottom 四边定位」并不能把画布撑开 ——
+// 四边定位会被忽略，画布缩成左上角一个小方块（横屏全屏页踩过：宽高都得显式给）。
+// 这里要求每个 canvas 合并 class 规则与内联 style 之后，width 和 height 都有。
+group("画布尺寸");
+const classDecls = new Map(); // ".foo" -> 声明文本（多文件同名类合并）
+for (const f of wxssFiles) {
+  const src = fs.readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const re = /([^{}]+)\{([^{}]*)\}/g;
+  let m;
+  while ((m = re.exec(src))) {
+    for (const sel of m[1].split(",")) {
+      const s = sel.trim();
+      if (!/^\.[\w-]+$/.test(s)) continue; // 只看单类选择器，够覆盖画布样式
+      classDecls.set(s, `${classDecls.get(s) || ""};${m[2]}`);
+    }
+  }
+}
+const hasProp = (css, prop) => new RegExp(`(^|[;{\\s])${prop}\\s*:`).test(css);
+const attr = (tag, name) => {
+  const m = new RegExp(`${name}="([^"]*)"`).exec(tag);
+  return m ? m[1] : "";
+};
+let canvasBad = 0;
+let canvasCount = 0;
+for (const f of walk(ROOT, (f) => f.endsWith(".wxml"))) {
+  const src = fs.readFileSync(f, "utf8");
+  const re = /<canvas\b([^>]*)>/g;
+  let m;
+  while ((m = re.exec(src))) {
+    canvasCount++;
+    // class 里可能有 {{}} 表达式，去掉后再按空白切分
+    const classes = attr(m[1], "class")
+      .replace(/\{\{[^}]*\}\}/g, " ")
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((c) => `.${c}`);
+    let css = classes.map((c) => classDecls.get(c) || "").join(";");
+    css += `;${attr(m[1], "style")}`;
+    const miss = ["width", "height"].filter((p) => !hasProp(css, p));
+    if (miss.length) {
+      const line = src.slice(0, m.index).split("\n").length;
+      canvasBad++;
+      bad(
+        `${path.relative(ROOT, f).replace(/\\/g, "/")}:${line}`,
+        `canvas 缺少 ${miss.join(" / ")}，会退回默认 300×150（四边定位不算数）`,
+      );
+    }
+  }
+}
+if (!canvasBad) ok(`${canvasCount} 处 canvas`, "宽高均已显式声明");
+
+// ---------------------------------------------------------------- 5. 页面四件套
 group("页面四件套");
 const appJson = JSON.parse(fs.readFileSync(path.join(ROOT, "app.json"), "utf8"));
 const declared = appJson.pages.map((p) => p.split("/")[1]);
@@ -132,7 +185,7 @@ if (notDeclared.length || missingDir.length) {
   ok("app.json 与 pages/", "一一对应");
 }
 
-// ---------------------------------------------------------------- 5. 图标资产
+// ---------------------------------------------------------------- 6. 图标资产
 group("图标资产");
 const iconFiles = [];
 for (const t of appJson.tabBar.list) {
@@ -162,7 +215,7 @@ for (const rel of brandFiles) {
 }
 if (!brandBad) ok(`品牌 ${brandFiles.length} 个`, "齐备");
 
-// ---------------------------------------------------------------- 6. 事件绑定
+// ---------------------------------------------------------------- 7. 事件绑定
 group("WXML 事件绑定");
 let handlerBad = 0;
 let handlerCount = 0;

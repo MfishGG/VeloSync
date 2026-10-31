@@ -72,6 +72,8 @@ function ticks(min, max, count) {
 }
 
 function fmtTick(v) {
+  // 0 单独处理：否则会落到下面的 toFixed(2) 变成「0.00」，和旁边的「7.3」不搭
+  if (v === 0) return "0";
   const a = Math.abs(v);
   if (a >= 10000) return `${(v / 1000).toFixed(0)}k`;
   if (a >= 100) return v.toFixed(0);
@@ -176,12 +178,12 @@ function drawAvgLine(ctx, box, avg, yScale, color) {
 function drawMetricRow(ctx, box, series, cfg) {
   const c = cfg || {};
   const hasData = series && series.length > 0;
-  const yRange = hasData
-    ? niceRange(
-        Math.min.apply(null, series.map((p) => p[1])),
-        Math.max.apply(null, series.map((p) => p[1])),
-      )
-    : c.blank || [0, 100];
+  const ymin = hasData ? Math.min.apply(null, series.map((p) => p[1])) : 0;
+  const ymax = hasData ? Math.max.apply(null, series.map((p) => p[1])) : 0;
+  const yRange = hasData ? niceRange(ymin, ymax) : c.blank || [0, 100];
+  // niceRange 上下各留 8%，会把起点拉到 0 以下。速度 / 心率 / 功率这些指标没有负值，
+  // 轴上冒出一格「-3.3」既没意义又白占一条刻度 —— 下界直接收到 0。
+  if (hasData && ymin >= 0 && yRange[0] < 0) yRange[0] = 0;
 
   const xvals = hasData ? series.map((p) => p[0]) : [0, 1];
   const xMin = Math.min.apply(null, xvals);
