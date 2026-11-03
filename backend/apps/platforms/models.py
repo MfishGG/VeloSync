@@ -266,3 +266,43 @@ class PlatformAccount(models.Model):
         self.status = "revoked"
         self.save(update_fields=["status"])
         logger.warning("平台账号 %s 标记为 revoked：%s", self.pk, reason)
+
+
+class OAuthState(models.Model):
+    """OAuth 授权流程的一次性状态：state 里的 nonce +（Garmin 用的）PKCE verifier。
+
+    **为什么不用 cache**：这两样东西的语义是「必须可靠读到、且只能消费一次」，
+    而缓存的两种正常行为恰好都和它冲突 —— 可以被淘汰（LRU/内存满即丢）、
+    可以按进程隔离（LocMemCache 每个 worker 各存一份）。线上实测过：两个
+    gunicorn worker 下「发起授权 → 立刻回调」有 40% 概率读不到 nonce，用户看到
+    「该授权链接已被使用或已过期」，看起来像他手慢，实际是我们自己丢了状态。
+    配 Redis 只是把问题盖住：Redis 抖动或降级成本地缓存时，同一个 bug 会以更
+    隐蔽的方式回来。
+
+    **一次性消费**靠 `DELETE ... WHERE nonce = ?` 的返回行数保证：并发回调下只有
+    一个请求能删到 1 行，其余拿 0 行，直接判为「已被使用」。
+
+    过期行不靠定时任务清理（部署上 beat 未必在跑）：每次发起授权时顺手删一遍
+    超过 `STATE_MAX_AGE` 的旧行，代价是一条走索引的 DELETE。
+    """
+
+    nonce = models.CharField("一次性标识", max_length=64, primary_key=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="oauth_states"
+    )
+    platform = models.ForeignKey(
+        Platform, on_delete=models.CASCADE, related_name="oauth_states"
+    )
+    #: 发起方（web / wx），回调据此决定落点；空串表示老客户端没传，交给回调自行判断
+    client = models.CharField("发起方", max_length=8, blank=True, default="")
+    #: 仅 requires_pkce 的平台有值
+    code_verifier = models.CharField("PKCE verifier", max_length=128, blank=True, default="")
+    created_at = models.DateTimeField("创建时间", auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = "OAuth 授权状态"
+        verbose_name_plural = "OAuth 授权状态"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.platform_id} · {self.user_id} · {self.nonce[:8]}"

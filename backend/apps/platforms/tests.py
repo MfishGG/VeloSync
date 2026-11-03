@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, unquote, urlparse
 
 from django.contrib.auth.models import User
-from django.core.cache import cache
+from django.core import signing
 from django.db import connection
 from django.test import TestCase, override_settings
 from django.utils import timezone
@@ -21,9 +21,10 @@ from .crypto import (
     encrypt,
     key_source,
 )
-from .models import Platform, PlatformAccount
+from .models import OAuthState, Platform, PlatformAccount
 from .testing import make_platform
 from .tokens import TokenError, ensure_fresh_token, refresh_access_token
+from .views import STATE_MAX_AGE
 
 
 class CryptoTests(TestCase):
@@ -459,13 +460,11 @@ class PkceFlowTests(TestCase):
         self.assertEqual(_code_challenge(payload["code_verifier"]), q["code_challenge"][0])
 
     def test_missing_verifier_is_reported_not_swallowed(self):
-        from django.core import signing
-
-        from .views import _PKCE_KEY
-
         q = self._start_auth()
         nonce = signing.loads(q["state"][0])["nonce"]
-        cache.delete(_PKCE_KEY.format(nonce))  # 模拟缓存过期 / 被清
+        # 只抹掉 verifier，保留那条记录：整条删掉会被「一次性」校验先拦下，
+        # 报「已被使用或已过期」，根本走不到 PKCE 这一支。
+        OAuthState.objects.filter(nonce=nonce).update(code_verifier="")
 
         resp = self.client.get(
             f"/api/accounts/garmin/callback/?code=auth-code&state={q['state'][0]}"
@@ -487,6 +486,112 @@ class PkceFlowTests(TestCase):
         q = self._start_auth("strava")
         self.assertNotIn("code_challenge", q)
         self.assertNotIn("code_challenge_method", q)
+
+
+class OAuthStateOnceOnlyTests(TestCase):
+    """state 的一次性由数据库里那一行保证，不再依赖 cache。
+
+    此前 nonce / PKCE verifier 存在 `cache` 里，而默认后端是 LocMemCache ——
+    **进程内**缓存，配 gunicorn 多 worker 时「写发生在 A 进程、回调落到 B 进程」
+    就读不到，用户看到「该授权链接已被使用或已过期」，看起来像他手慢。
+    线上实测 10 次里丢 4 次（40%）。
+
+    换成一张表之后，判断标准只有一个：`DELETE ... WHERE nonce=?` 影响了几行。
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user("once", "once@example.test", "pw-12345")
+        self.platform = make_platform(
+            code="strava",
+            auth_type="oauth2",
+            authorize_url="https://www.strava.com/oauth/authorize",
+            token_url="https://www.strava.com/oauth/token",
+            api_base="https://www.strava.com/api/v3",
+            client_id="cid",
+            client_secret="secret",
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def _start(self) -> str:
+        resp = self.client.get("/api/accounts/strava/authorize/?client=web")
+        self.assertEqual(resp.status_code, 200, resp.content[:200])
+        return resp.json()["state"]
+
+    def _callback(self, state: str):
+        return self.client.get(f"/api/accounts/strava/callback/?code=auth-code&state={state}")
+
+    def test_authorize_persists_state_row(self):
+        state = self._start()
+        nonce = signing.loads(state)["nonce"]
+        row = OAuthState.objects.get(nonce=nonce)
+        self.assertEqual(row.user_id, self.user.id)
+        self.assertEqual(row.platform.code, "strava")
+        self.assertEqual(row.client, "web")
+
+    def test_state_can_only_be_used_once(self):
+        state = self._start()
+        with patch("apps.platforms.views.post_json") as post_json:
+            post_json.return_value = {
+                "access_token": "at",
+                "expires_in": 3600,
+                "athlete": {"id": 902},
+            }
+            first = self._callback(state)
+            second = self._callback(state)
+
+        self.assertEqual(first.status_code, 302)
+        self.assertNotIn("bind=error", first["Location"])
+        # 重放：同一个 state 不能换出第二个绑定
+        self.assertIn("bind=error", second["Location"])
+        self.assertIn("已被使用", unquote(second["Location"]))
+        self.assertEqual(PlatformAccount.objects.count(), 1)
+        self.assertFalse(OAuthState.objects.exists())
+
+    def test_expired_state_is_rejected_even_if_signature_is_fresh(self):
+        state = self._start()
+        nonce = signing.loads(state)["nonce"]
+        OAuthState.objects.filter(nonce=nonce).update(
+            created_at=timezone.now() - timedelta(seconds=STATE_MAX_AGE + 60)
+        )
+
+        resp = self._callback(state)
+        self.assertIn("bind=error", resp["Location"])
+        self.assertIn("已过期", unquote(resp["Location"]))
+        self.assertFalse(PlatformAccount.objects.exists())
+
+    def test_row_decides_which_user_gets_bound(self):
+        """签名只证明「是我们签的」；绑给谁以库里的行为准。
+
+        否则一个被拿到手的 state 只要改不了签名就没事，但一旦签名密钥泄漏
+        （或同一 key 被别的代码复用），user_id 就成了攻击者可控字段。
+        """
+        other = User.objects.create_user("other", "other@example.test", "pw-12345")
+        OAuthState.objects.create(
+            nonce="n-forged", user=other, platform=self.platform, client="web"
+        )
+        forged = signing.dumps(
+            {
+                "user_id": self.user.id,
+                "platform": "strava",
+                "nonce": "n-forged",
+                "client": "web",
+            }
+        )
+
+        resp = self._callback(forged)
+        self.assertIn("bind=error", resp["Location"])
+        self.assertFalse(PlatformAccount.objects.exists())
+
+    def test_authorize_purges_expired_rows(self):
+        OAuthState.objects.create(nonce="stale-row", user=self.user, platform=self.platform)
+        OAuthState.objects.filter(nonce="stale-row").update(
+            created_at=timezone.now() - timedelta(seconds=STATE_MAX_AGE + 60)
+        )
+
+        self._start()
+
+        self.assertFalse(OAuthState.objects.filter(nonce="stale-row").exists())
 
 
 class CallbackLandingTests(TestCase):

@@ -3,13 +3,14 @@ import hashlib
 import logging
 import secrets
 import uuid
+from datetime import timedelta
 from urllib.parse import quote as urlquote
 
 from django.conf import settings
 from django.core import signing
-from django.core.cache import cache
 from django.http import HttpResponse
 from django.shortcuts import redirect
+from django.utils import timezone
 from django.utils.html import escape
 from rest_framework import viewsets
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -19,20 +20,44 @@ from rest_framework.views import APIView
 from apps.synclogs.models import SyncLog
 
 from .adapters import get_adapter
-from .models import Platform, PlatformAccount
+from .models import OAuthState, Platform, PlatformAccount
 from .serializers import PlatformAccountSerializer, PlatformSerializer
 from .tokens import TokenError, post_json, resolve_expiry
 
 logger = logging.getLogger(__name__)
 
-#: OAuth state 的有效期（秒）。签名有效期与一次性 nonce 的缓存 TTL 保持一致。
+#: OAuth state 的有效期（秒）：签名有效期，与库里那条一次性记录的存活上限一致。
 STATE_MAX_AGE = 600
 
-#: 一次性 nonce 的缓存键前缀
-_STATE_KEY = "oauth_state:{}"
 
-#: PKCE code_verifier 的缓存键前缀（与 state 同寿命，回调时取用后立即删除）
-_PKCE_KEY = "oauth_pkce:{}"
+def _purge_expired_states() -> None:
+    """清掉过期的一次性状态。
+
+    刻意不依赖定时任务：部署里 CELERY_TASK_ALWAYS_EAGER=1 时没有任何 beat 进程，
+    「等别人来清」等于永远不清。发起授权是低频操作（用户点一次绑定），
+    在这里顺手删一条走索引的旧数据，成本可以忽略。
+    """
+    deadline = timezone.now() - timedelta(seconds=STATE_MAX_AGE)
+    OAuthState.objects.filter(created_at__lt=deadline).delete()
+
+
+def _consume_state(nonce: str):
+    """取出并作废一条一次性状态，返回记录（不存在/已被消费时返回 None）。
+
+    先查后删而不是直接删：既要拿 code_verifier，又必须靠 DELETE 的影响行数
+    判定「是不是我删到的」。并发下只有一个请求能删到 1 行 —— 这也正是
+    「一次性」的定义，不需要额外加锁。
+    """
+    if not nonce:
+        return None
+    row = OAuthState.objects.filter(nonce=nonce).select_related("platform").first()
+    if row is None:
+        return None
+    deleted, _ = OAuthState.objects.filter(nonce=nonce).delete()
+    if not deleted:
+        # 竞态：另一个并发的回调请求先删到了这一行
+        return None
+    return row
 
 
 def _new_code_verifier() -> str:
@@ -266,12 +291,6 @@ class AuthorizeView(APIView):
                 status=400,
             )
 
-        # 签名里带上 nonce，并把它记进缓存 —— 回调时消费掉。
-        # 只靠签名的话 state 在 10 分钟内**可以重复使用**（无 nonce、无一次性消费），
-        # 一次授权码被重放就能反复创建绑定。
-        nonce = uuid.uuid4().hex
-        cache.set(_STATE_KEY.format(nonce), code, timeout=STATE_MAX_AGE)
-
         # 发起方要进 state：回调是浏览器最后停的地方，小程序 / Web 两种客户端
         # 的落点完全不同（小程序要一张「回微信」的结果页，Web 要回工作台账号页）。
         # 不能靠 query 参数传 —— 回调的 URL 是平台按登记值原样跳回来的，
@@ -283,6 +302,21 @@ class AuthorizeView(APIView):
         client = request.query_params.get("client", "")
         if client not in ("web", "wx"):
             client = ""
+
+        # 一次性状态落库（不是缓存）：签名只能证明「这个 state 是我们签发的」，
+        # 挡不住重复使用 —— 同一个 state 在 10 分钟内可以反复换 token、反复建绑定。
+        # 这里的 nonce 是「只能用一次」的那把锁。
+        nonce = uuid.uuid4().hex
+        verifier = _new_code_verifier() if platform.requires_pkce else ""
+        _purge_expired_states()
+        OAuthState.objects.create(
+            nonce=nonce,
+            user=request.user,
+            platform=platform,
+            client=client,
+            code_verifier=verifier,
+        )
+
         state = signing.dumps(
             {"user_id": request.user.id, "platform": code, "nonce": nonce, "client": client}
         )
@@ -296,11 +330,9 @@ class AuthorizeView(APIView):
         }
 
         # Garmin 这类平台强制 PKCE（官方规范：code_challenge_method=S256 required）。
-        # verifier 不能只留在内存里 —— 授权页走一圈回来是**另一个请求**，
-        # 所以和 nonce 一样存进缓存，回调时取出来交给 token 端点。
-        if platform.requires_pkce:
-            verifier = _new_code_verifier()
-            cache.set(_PKCE_KEY.format(nonce), verifier, timeout=STATE_MAX_AGE)
+        # verifier 不能只留在内存里 —— 授权页走一圈回来是**另一个请求**，所以和
+        # nonce 一起落库（见上面的 OAuthState），回调时取出来交给 token 端点。
+        if verifier:
             params["code_challenge"] = _code_challenge(verifier)
             params["code_challenge_method"] = "S256"
 
@@ -386,20 +418,25 @@ class CallbackView(APIView):
         if state.get("platform") != code:
             return back(False, "state 与当前平台不匹配，请重新发起授权")
 
-        # ② state 只能消费一次。缺失说明被重放或已过期。
-        nonce = state.get("nonce") or ""
-        if not nonce or cache.get(_STATE_KEY.format(nonce)) is None:
+        # ② state 只能消费一次。库里的那条记录就是「一次性」本身：
+        #    删到 1 行才算这次回调的唯一持有者，删不到说明已被用过或从没签发过。
+        row = _consume_state(state.get("nonce") or "")
+        if row is None:
             return back(False, "该授权链接已被使用或已过期，请重新发起授权")
-        cache.delete(_STATE_KEY.format(nonce))
 
-        # PKCE：取回发起授权时生成的 verifier。取不到说明缓存已过期或链接被重放，
-        # 这时交换 token 必然失败（平台会报 invalid_grant），不如直接说清楚。
-        code_verifier = ""
-        if platform.requires_pkce:
-            code_verifier = cache.get(_PKCE_KEY.format(nonce)) or ""
-            cache.delete(_PKCE_KEY.format(nonce))
-            if not code_verifier:
-                return back(False, "PKCE 校验参数已过期，请重新发起授权")
+        # ③ 过期判断在库里做（签名有效期内也可能已过 STATE_MAX_AGE），
+        #    并且**以落库值为准**核对归属：签名只证明「是我们签的」，
+        #    到底绑给谁、绑哪个平台，看签发时写下的那一行。
+        if row.created_at < timezone.now() - timedelta(seconds=STATE_MAX_AGE):
+            return back(False, "该授权链接已过期，请重新发起授权")
+        if row.user_id != user_id or row.platform.code != code:
+            return back(False, "授权参数无效")
+
+        # PKCE：verifier 是发起授权时和 nonce 一起写下的。为空说明那条记录不完整
+        # （平台要求 PKCE 就一定有值），继续换 token 只会拿到 invalid_grant。
+        code_verifier = row.code_verifier if platform.requires_pkce else ""
+        if platform.requires_pkce and not code_verifier:
+            return back(False, "PKCE 校验参数已过期，请重新发起授权")
 
         try:
             if platform.auth_type == "mock":

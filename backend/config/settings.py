@@ -194,10 +194,14 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 # ---------- 缓存 ----------
-# 限流、微信 access_token、OAuth state 一次性校验都依赖缓存。
-# 默认 LocMemCache 是**进程内**缓存：多 worker 时各进程各算一份，
-# 限流额度会被放大成 N 倍、access_token 会重复获取。规模上来后请设
-# CACHE_URL（需 redis 包）换成共享缓存。
+# 目前只有 DRF 的限流（ScopedRateThrottle）用它。默认 LocMemCache 是**进程内**
+# 缓存：多 worker 时各进程各算一份，限流额度会被放大成 worker 数倍。
+# 规模上来后请设 CACHE_URL（需 redis 包）换成共享缓存。
+#
+# 注意：OAuth 的一次性 state（nonce / PKCE verifier）**不在这里**，它存在
+# `platforms.OAuthState` 表里 —— 「必须可靠读到、且只能消费一次」这两条和缓存的
+# 正常行为（可淘汰、按进程隔离）直接冲突，此前放这里实测 40% 的绑定会莫名其妙
+# 报「授权链接已被使用或已过期」。别再把这类一次性凭证挪回缓存。
 CACHE_URL = os.getenv("CACHE_URL", "")
 if CACHE_URL:
     CACHES = {

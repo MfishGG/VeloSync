@@ -98,8 +98,9 @@ class Command(BaseCommand):
                 (
                     WARN,
                     "CACHE_URL",
-                    "使用进程内缓存：限流额度会被放大成 worker 数倍，微信 access_token 会重复获取。"
-                    "多实例部署请设 CACHE_URL 指向 Redis。",
+                    "使用进程内缓存：限流额度会被放大成 worker 数倍。"
+                    "多实例部署请设 CACHE_URL 指向 Redis。"
+                    "（OAuth 一次性状态已改存数据库，不受此项影响）",
                 )
             )
         else:
