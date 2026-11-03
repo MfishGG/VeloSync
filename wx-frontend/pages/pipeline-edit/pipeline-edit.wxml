@@ -22,7 +22,7 @@
     <!-- ============ 执行图 ============ -->
     <view class="card">
       <view class="card__title">执行图</view>
-      <view class="card__hint">配置变更后由后端自动重建：源 → 时间范围 → 各目标账号</view>
+      <view class="card__hint">保存后会按「源 → 时间范围 → 目标账号」重新生成同步流程</view>
 
       <view class="flow">
         <view
@@ -118,7 +118,7 @@
       <view class="switch-row">
         <view class="switch-row__text">
           <view class="t-md t1">定时自动运行</view>
-          <view class="t-xs t3">由后端 Celery Beat 每 5 分钟轮询</view>
+          <view class="t-xs t3">开启后系统会自动检查并同步新记录</view>
         </view>
         <switch checked="{{config.auto_run}}" color="#4f46e5" data-field="auto_run" bindchange="onSwitch" />
       </view>

@@ -1,3 +1,4 @@
+const { offlineShort, offlineText } = require("../../utils/env");
 const api = require("../../api/index");
 
 const STEPS = [
@@ -64,9 +65,7 @@ Page({
         this.setData({
           loading: false,
           error:
-            err.status === 0
-              ? "无法连接后端服务，请先启动 Django（127.0.0.1:8000）"
-              : err.message,
+            err.status === 0 ? offlineText() : err.message,
         }),
       );
   },
@@ -172,7 +171,7 @@ Page({
       .catch((err) => {
         this.setData({ previewing: false });
         wx.showToast({
-          title: err.status === 0 ? "无法连接后端服务" : err.message,
+          title: err.status === 0 ? offlineShort() : err.message,
           icon: "none",
         });
       });
@@ -202,7 +201,7 @@ Page({
       .catch((err) => {
         this.setData({ submitting: false });
         wx.showToast({
-          title: err.status === 0 ? "无法连接后端服务" : err.message,
+          title: err.status === 0 ? offlineShort() : err.message,
           icon: "none",
         });
       });

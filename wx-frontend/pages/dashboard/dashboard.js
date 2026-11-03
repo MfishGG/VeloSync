@@ -1,3 +1,4 @@
+const { offlineText } = require("../../utils/env");
 const api = require("../../api/index");
 const auth = require("../../utils/auth");
 const chart = require("../../utils/chart");
@@ -95,9 +96,7 @@ Page({
         this.setData({
           loading: false,
           error:
-            err.status === 0
-              ? "无法连接后端服务，请先启动 Django（127.0.0.1:8000）"
-              : err.message,
+            err.status === 0 ? offlineText() : err.message,
         });
       });
   },

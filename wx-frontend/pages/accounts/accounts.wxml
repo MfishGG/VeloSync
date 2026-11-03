@@ -31,7 +31,7 @@
             <view class="grow">
               <view class="t-md bold t1 ellipsis">{{item.name}}</view>
               <view class="t-xs t3">
-                {{item.auth_type}} · {{item.upload ? '可上传' : '仅拉取'}}
+                {{item.channelLabel}} · {{item.upload ? '可上传' : '仅拉取'}}
               </view>
             </view>
           </view>
@@ -43,7 +43,7 @@
         <view class="pcard__hint" style="margin-top:14rpx">{{item.bindHint}}</view>
 
         <view class="pcard__hint" wx:if="{{!item.oauth_ready && item.oauth_missing.length}}">
-          该平台的授权凭证尚未配置完成，暂时只能以演示身份绑定
+          该平台暂未开放正式授权，可以先用演示身份体验完整流程
         </view>
 
         <view
@@ -79,7 +79,7 @@
           <view class="t-xs t3" style="margin-top:6rpx">
             {{item.platformName}} · {{item.platformUserId}}
           </view>
-          <view class="t-xs t3">绑定于 {{item.created}} · 状态 {{item.status}}</view>
+          <view class="t-xs t3">绑定于 {{item.created}} · 状态 {{item.statusLabel}}</view>
         </view>
         <view
           class="btn btn--danger-soft btn--sm"

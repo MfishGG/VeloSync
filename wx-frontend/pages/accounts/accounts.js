@@ -1,3 +1,4 @@
+const { offlineText } = require("../../utils/env");
 const api = require("../../api/index");
 const auth = require("../../utils/auth");
 const config = require("../../config");
@@ -63,10 +64,10 @@ Page({
               p.auth_type === "mock"
                 ? "演示平台"
                 : p.mobile_bind_channel === "miniprogram"
-                  ? "可跳官方小程序"
+                  ? "官方小程序授权"
                   : p.mobile_bind_channel === "oauth"
                     ? "浏览器授权"
-                    : "仅演示绑定",
+                    : "暂未开放",
             /**
              * 面向用户的「绑定方式」：说清点下去会发生什么。
              * 刻意不提「微信不允许唤起第三方 App / 三级兜底」——那是给后台配置者
@@ -90,7 +91,11 @@ Page({
             platformCode: a.platform.code,
             displayName: a.display_name || a.platform_user_id,
             platformUserId: a.platform_user_id,
-            status: a.status,
+            // 后端给的是 active / expired / revoked。直接把枚举值印在界面上，
+            // 用户看到的是「状态 active」——英文单词对他来说等于没说。
+            statusLabel:
+              { active: "有效", expired: "已过期", revoked: "已撤销" }[a.status] ||
+              a.status,
             isDemo: /^(mock|demo)-/.test(a.platform_user_id || ""),
             created: String(a.created_at || "").slice(0, 10),
           })),
@@ -101,9 +106,7 @@ Page({
         this.setData({
           loading: false,
           error:
-            err.status === 0
-              ? "无法连接后端服务，请先启动 Django（127.0.0.1:8000）"
-              : err.message,
+            err.status === 0 ? offlineText() : err.message,
         }),
       );
   },
@@ -129,9 +132,9 @@ Page({
       items.push(`复制授权链接，在浏览器完成 ${p.name} 授权`);
       actions.push("browser");
     }
-    items.push("以演示身份绑定（本地跑通）");
+    items.push("以演示身份绑定");
     actions.push("demo");
-    items.push("查看凭证配置指引");
+    items.push("这个平台怎么绑定");
     actions.push("help");
 
     wx.showActionSheet({
@@ -157,19 +160,20 @@ Page({
       envVersion: "release",
       success: () => {
         wx.showModal({
-          title: "已跳转官方小程序",
+          title: "已打开官方小程序",
           content:
             `请在 ${p.name} 官方小程序内完成授权。\n\n` +
-            "注意：跳转只是把你送到官方那边，VeloSync 读不到对方的账号，" +
-            "所以这里不会自动出现新绑定。若想在本页看到账号，可用「以演示身份绑定」先跑通流程。",
+            "回到本页后下拉刷新。如果一直没有出现新账号，说明该平台不支持这种方式的绑定，" +
+            "可以改用「演示身份」体验完整流程。",
           showCancel: false,
         });
       },
-      fail: (err) => {
+      fail: () => {
         wx.showModal({
-          title: "跳转失败",
-          content: `无法打开 ${p.name} 官方小程序（${(err && err.errMsg) || "未知原因"}）。\n` +
-            "可由后台在「平台 → 移动端绑定渠道」中核对官方小程序 AppID。",
+          title: "打不开官方小程序",
+          content:
+            `暂时无法打开 ${p.name} 官方小程序。\n\n` +
+            "可以稍后重试，或先用「演示身份」体验绑定与同步流程。",
           showCancel: false,
         });
       },
@@ -228,7 +232,7 @@ Page({
           // 凭证在页面加载后被撤掉的情况：不把用户卡在这里，直接给可用的退路
           wx.showModal({
             title: `${p.name} 暂未开通真实授权`,
-            content: "该平台的 OAuth 凭证尚未配置，暂时只能以演示身份绑定。",
+            content: "该平台暂未开放正式授权，可以先用演示身份体验。",
             confirmText: "演示绑定",
             success: (r) => {
               if (r.confirm) this.demoBind(p, `${p.name} 已用演示身份绑定`);
@@ -262,19 +266,29 @@ Page({
       });
   },
 
-  /** 凭证配置指引 */
+  /**
+   * 「这个平台怎么绑定」。
+   *
+   * 只讲用户下一步该做什么。凭证字段名、AppID、Django Admin 路径一律不出现 ——
+   * 项目既定原则是开发者信息不上屏（见 settings.wxml 与 admin.py），而这一页是
+   * 用户绑定账号时最先打开的地方，更不该把后台地址摆在上面。
+   */
   showHelp(p) {
-    const missing = (p.oauth_missing || []).join("、") || "无";
+    let how;
+    if (p.oauth_ready) {
+      how =
+        "点「绑定账号」后会把授权链接复制到剪贴板：打开手机浏览器粘贴访问，" +
+        `登录 ${p.name} 并同意授权，看到「绑定成功」后回到本页下拉刷新。`;
+    } else if (p.miniprogram_appid) {
+      how = `点「绑定账号」会跳转到 ${p.name} 官方小程序，请在那里完成授权。`;
+    } else {
+      how =
+        `${p.name} 暂时没有开放直接授权，只能用「演示身份」体验绑定与同步流程` +
+        "（同步的是演示数据，不会连接你的真实账号）。";
+    }
     wx.showModal({
-      title: `${p.name} 绑定说明`,
-      content:
-        `当前绑定渠道：${p.channelLabel}\n` +
-        `OAuth 凭证：${p.oauth_ready ? "已配置" : `未配置（缺 ${missing}）`}\n\n` +
-        "在微信小程序内绑定第三方平台的方式：\n" +
-        "① 官方小程序：在后台「平台 → 移动端绑定渠道」填 miniprogram_appid；\n" +
-        "② 浏览器授权：OAuth 凭证齐全后，复制授权页链接在浏览器完成；\n" +
-        "③ 演示身份：无需凭证，用于本地跑通全链路。\n\n" +
-        "Django Admin：/admin/platforms/platform/",
+      title: `${p.name} 怎么绑定`,
+      content: how,
       showCancel: false,
       confirmText: "知道了",
     });
