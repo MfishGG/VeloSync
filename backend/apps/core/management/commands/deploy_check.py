@@ -169,9 +169,9 @@ class Command(BaseCommand):
                 (
                     WARN,
                     "FRONTEND_URL",
-                    f"{frontend}（仍是本机地址）。小程序端不受影响（回调会返回结果页），"
-                    "但 Web 端绑定完会被跳到打不开的 localhost。"
-                    "Web 上线后请填公网 https 地址。",
+                    f"{frontend}（仍是本机地址）。小程序端不受影响（回调给结果页）；"
+                    "Web 端绑定完成后也不会再跳这个地址，而是停在结果页 —— "
+                    "够用，但少了「一键回工作台」。Web 上线后请填公网 https 地址。",
                 )
             )
         else:

@@ -123,7 +123,7 @@ font-size:13px;color:#6b7280;text-align:left}
 """
 
 
-def _result_page(ok: bool, msg: str = "", web_url: str = "") -> str:
+def _result_page(ok: bool, msg: str = "", web_url: str = "", web_client: bool = False) -> str:
     """回调结果页：面向「在浏览器里绑完、要回到小程序」的用户。
 
     刻意做成一整页而不是一句 "绑定成功"：用户是从微信跳出来、又要在浏览器里
@@ -132,12 +132,20 @@ def _result_page(ok: bool, msg: str = "", web_url: str = "") -> str:
     if ok:
         title = "绑定成功"
         text = "授权已完成，这个平台的账号已经和 VeloSync 关联好了。"
-        tip = "请回到微信，在「我的 → 平台账号」下拉刷新，即可看到已绑定的账号。"
+        tip = (
+            "请回到 Web 工作台，在「账号管理」刷新即可看到已绑定的账号。"
+            if web_client
+            else "请回到微信，在「我的 → 平台账号」下拉刷新，即可看到已绑定的账号。"
+        )
         badge = "✓"
     else:
         title = "绑定没有完成"
         text = "授权过程中出了问题，账号尚未绑定。"
-        tip = "请回到小程序，在「我的 → 平台账号」重新点一次绑定。"
+        tip = (
+            "请回到 Web 工作台，在「账号管理」重新点一次绑定。"
+            if web_client
+            else "请回到小程序，在「我的 → 平台账号」重新点一次绑定。"
+        )
         badge = "!"
 
     reason = f'<div class="reason">{escape(msg)}</div>' if msg else ""
@@ -394,16 +402,24 @@ class CallbackView(APIView):
         # 前后端版本稍微错开就又是一次「绑定失败」。
         client = state.get("client") or ("web" if (settings.DEBUG or public_web) else "wx")
 
+        # 落点优先级：公网工作台 > 本机开发用的 dev server > 结果页。
+        # `FRONTEND_URL` 没配时它是 `http://localhost:5173`，跳过去必然是
+        # 「localhost 拒绝连接」——用户绑成功了却以为失败。生产（DEBUG=0）下
+        # 宁可停在一张结果页，也不要把浏览器扔到一个打不开的地址。
+        landing = public_web or (frontend if settings.DEBUG else "")
+
         def back(ok: bool, msg: str = ""):
-            if client == "wx" or not frontend:
+            if client == "wx" or not landing:
                 # 小程序：给一张结果页。浏览器里没有「回小程序」这种 API，
                 # 只能把话说清楚（绑成功没有、现在该回哪儿）。
                 return HttpResponse(
-                    _result_page(ok, msg, web_url=public_web),
+                    _result_page(
+                        ok, msg, web_url=public_web, web_client=(client == "web")
+                    ),
                     content_type="text/html; charset=utf-8",
                 )
             suffix = f"?bind={'ok' if ok else 'error'}&msg={urlquote(msg)}"
-            return redirect(f"{frontend}/accounts{suffix}")
+            return redirect(f"{landing}/accounts{suffix}")
 
         if state_bad:
             return back(False, state_bad)

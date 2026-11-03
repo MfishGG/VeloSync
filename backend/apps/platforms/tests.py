@@ -424,9 +424,10 @@ class PkceFlowTests(TestCase):
         self.client.force_authenticate(user=self.user)
 
     def _start_auth(self, code="garmin"):
-        # 显式 client=web：这些用例断言的是回调的 302 落点，与「谁发起的」无关，
-        # 而 state 里不带 client 时回调会按环境自行判断（见 CallbackLandingTests）。
-        resp = self.client.get(f"/api/accounts/{code}/authorize/?client=web")
+        # 走小程序发起方：回调直接给结果页（200 + HTML），断言不依赖落点判断。
+        # 用 client=web 的话，`back()` 会在「FRONTEND_URL 未配」时改成结果页，
+        # 落点规则一变这些与落点无关的用例就得跟着改 —— 别把它们耦合进去。
+        resp = self.client.get(f"/api/accounts/{code}/authorize/?client=wx")
         self.assertEqual(resp.status_code, 200, resp.content[:200])
         url = resp.json()["authorize_url"]
         return parse_qs(urlparse(url).query)
@@ -453,7 +454,8 @@ class PkceFlowTests(TestCase):
             resp = self.client.get(
                 f"/api/accounts/garmin/callback/?code=auth-code&state={q['state'][0]}"
             )
-        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("绑定成功", resp.content.decode())
 
         payload = post_json.call_args[0][1]
         # 用同一算法复算，必须与发起授权时给出的 challenge 完全一致
@@ -469,8 +471,8 @@ class PkceFlowTests(TestCase):
         resp = self.client.get(
             f"/api/accounts/garmin/callback/?code=auth-code&state={q['state'][0]}"
         )
-        self.assertEqual(resp.status_code, 302)
-        self.assertIn("PKCE", resp["Location"])
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("PKCE", resp.content.decode())
 
     def test_platform_without_pkce_has_no_challenge(self):
         make_platform(
@@ -514,7 +516,9 @@ class OAuthStateOnceOnlyTests(TestCase):
         self.client.force_authenticate(user=self.user)
 
     def _start(self) -> str:
-        resp = self.client.get("/api/accounts/strava/authorize/?client=web")
+        # 用小程序发起方：回调直接返回结果页，本类验证的是「一次性」，
+        # 不该被 back() 的落点规则牵着走。
+        resp = self.client.get("/api/accounts/strava/authorize/?client=wx")
         self.assertEqual(resp.status_code, 200, resp.content[:200])
         return resp.json()["state"]
 
@@ -527,7 +531,7 @@ class OAuthStateOnceOnlyTests(TestCase):
         row = OAuthState.objects.get(nonce=nonce)
         self.assertEqual(row.user_id, self.user.id)
         self.assertEqual(row.platform.code, "strava")
-        self.assertEqual(row.client, "web")
+        self.assertEqual(row.client, "wx")
 
     def test_state_can_only_be_used_once(self):
         state = self._start()
@@ -540,11 +544,10 @@ class OAuthStateOnceOnlyTests(TestCase):
             first = self._callback(state)
             second = self._callback(state)
 
-        self.assertEqual(first.status_code, 302)
-        self.assertNotIn("bind=error", first["Location"])
+        self.assertEqual(first.status_code, 200)
+        self.assertIn("绑定成功", first.content.decode())
         # 重放：同一个 state 不能换出第二个绑定
-        self.assertIn("bind=error", second["Location"])
-        self.assertIn("已被使用", unquote(second["Location"]))
+        self.assertIn("已被使用", second.content.decode())
         self.assertEqual(PlatformAccount.objects.count(), 1)
         self.assertFalse(OAuthState.objects.exists())
 
@@ -556,8 +559,7 @@ class OAuthStateOnceOnlyTests(TestCase):
         )
 
         resp = self._callback(state)
-        self.assertIn("bind=error", resp["Location"])
-        self.assertIn("已过期", unquote(resp["Location"]))
+        self.assertIn("已过期", resp.content.decode())
         self.assertFalse(PlatformAccount.objects.exists())
 
     def test_row_decides_which_user_gets_bound(self):
@@ -580,7 +582,7 @@ class OAuthStateOnceOnlyTests(TestCase):
         )
 
         resp = self._callback(forged)
-        self.assertIn("bind=error", resp["Location"])
+        self.assertIn("授权参数无效", resp.content.decode())
         self.assertFalse(PlatformAccount.objects.exists())
 
     def test_authorize_purges_expired_rows(self):
@@ -656,7 +658,9 @@ class CallbackLandingTests(TestCase):
         self.assertIn("绑定成功", body)
         self.assertIn("回到微信", body)
 
+    @override_settings(DEBUG=True)
     def test_web_callback_still_redirects_to_frontend(self):
+        """本机开发：Web 工作台跑在 vite dev server 上，必须跳回 localhost:5173。"""
         q = self._start("?client=web")
         with patch("apps.platforms.views.post_json") as post_json:
             post_json.return_value = {
@@ -670,6 +674,33 @@ class CallbackLandingTests(TestCase):
             )
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/accounts?bind=ok", resp["Location"])
+
+    @override_settings(DEBUG=False, FRONTEND_URL="http://localhost:5173")
+    def test_web_callback_without_public_frontend_stops_at_result_page(self):
+        """生产上 `FRONTEND_URL` 没配时就停在结果页，不要把人扔去 localhost。
+
+        它的默认值就是 `http://localhost:5173`，而 Web 工作台目前没有公网部署。
+        302 过去只有一个结果：浏览器「拒绝连接」，用户以为绑定失败 —— 实际账号
+        已经绑上了。宁可少一个跳转，也不要给出一个确定打不开的地址。
+        """
+        q = self._start("?client=web")
+        with patch("apps.platforms.views.post_json") as post_json:
+            post_json.return_value = {
+                "access_token": "at",
+                "refresh_token": "rt",
+                "expires_in": 3600,
+                "athlete": {"id": 12345678},
+            }
+            resp = self.client.get(
+                f"/api/accounts/strava/callback/?code=auth-code&state={q['state'][0]}"
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.content.decode()
+        self.assertIn("绑定成功", body)
+        # 提示语要按「Web 发起方」写，不能叫一个在电脑前的人「回到微信」
+        self.assertIn("工作台", body)
+        self.assertNotIn("回到微信", body)
 
     @override_settings(DEBUG=False, FRONTEND_URL="http://localhost:5173")
     def test_legacy_miniprogram_build_still_gets_result_page(self):
