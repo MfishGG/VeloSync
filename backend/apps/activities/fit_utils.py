@@ -172,6 +172,131 @@ def _stats(values: list[float]) -> tuple[float | None, float | None]:
     return round(sum(clean) / len(clean), 1), round(max(clean), 1)
 
 
+def summarize_samples(
+    samples: list[dict],
+    track: list[list[float]],
+    *,
+    start_dt: datetime | None = None,
+    sport: str = "",
+    distance_km: float = 0.0,
+    duration: int = 0,
+    session: dict | None = None,
+    raw_count: int | None = None,
+    raw_track_count: int | None = None,
+    downsampled: bool = False,
+) -> tuple[dict, dict]:
+    """从采样点计算 summary 与各指标统计（FIT 导入与平台拉取共用）。
+
+    为什么必须共用：Strava 这类平台拿不到原始文件，只能用 streams 重建采样点。
+    如果在这里再写一套统计，两个来源的字段名、精度、兜底规则会慢慢漂开 ——
+    前端「数据曲线」页就得为它们各写一套兼容，而漂移本身没有任何报错。
+
+    注意：**会就地剔除采样点里 count 为 0 的指标键**（避免 JSON 塞满 null），
+    因此本函数应视为消费 samples 的最后一步。
+
+    `session` 是 FIT session 消息的等价物，用于接收平台已给出的均值/极值
+    （Strava 的 average_heartrate、max_watts 等）；缺失时一律从采样点现算。
+    """
+    session = session or {}
+    sport = str(sport or session.get("sport") or "").lower()
+
+    hearts = [s.get("heart_rate") for s in samples]
+    powers = [s.get("power") for s in samples]
+    cads = [s.get("cadence") for s in samples]
+    speeds = [s.get("speed_kmh") for s in samples]
+    alts = [s.get("altitude") for s in samples]
+
+    if not duration:
+        duration = session.get("total_timer_time") or session.get("total_elapsed_time")
+    if not duration:
+        times = [s.get("t") for s in samples if s.get("t") is not None]
+        duration = (max(times) - min(times)) if len(times) > 1 else 0
+    duration = int(duration or 0)
+
+    distance_km = round(float(distance_km or 0), 2)
+    if not distance_km:
+        distance_km = round(max((s.get("distance_km") or 0 for s in samples), default=0), 2)
+
+    ascent = session.get("total_ascent")
+    descent = session.get("total_descent")
+    valid_alts = [a for a in alts if a is not None]
+    if ascent is None and len(valid_alts) > 1:
+        ascent = int(sum(max(valid_alts[i + 1] - valid_alts[i], 0) for i in range(len(valid_alts) - 1)))
+    if descent is None and len(valid_alts) > 1:
+        descent = int(sum(max(valid_alts[i] - valid_alts[i + 1], 0) for i in range(len(valid_alts) - 1)))
+
+    if session.get("avg_heart_rate") is not None:
+        avg_hr, max_hr = session["avg_heart_rate"], session.get("max_heart_rate")
+    else:
+        avg_hr, max_hr = _stats(hearts)
+    if session.get("avg_power") is not None:
+        avg_power, max_power = session["avg_power"], session.get("max_power")
+    else:
+        avg_power, max_power = _stats(powers)
+    if session.get("avg_cadence") is not None:
+        avg_cad, max_cad = session["avg_cadence"], session.get("max_cadence")
+    else:
+        avg_cad, max_cad = _stats(cads)
+
+    avg_speed = session.get("avg_speed")  # 单位 m/s，与 samples 的 km/h 不同
+    max_speed = session.get("max_speed")
+    if avg_speed is None:
+        avg_speed, _ = _stats(speeds)
+        max_speed = max((s for s in speeds if s is not None), default=None)
+    else:
+        avg_speed = round(avg_speed * 3.6, 2)
+        max_speed = round(max_speed * 3.6, 2) if max_speed is not None else None
+
+    # ---- 各指标统计：前端据此决定画曲线还是留空白槽位 ----
+    metrics = {key: _metric_stats(samples, key) for key in METRIC_SPEC}
+    for key, stat in metrics.items():
+        if stat["count"] == 0:
+            for s in samples:
+                s.pop(key, None)
+
+    if start_dt is None and isinstance(session.get("start_time"), datetime):
+        start_dt = session["start_time"]
+
+    summary = {
+        "start_time": start_dt.isoformat() if isinstance(start_dt, datetime) else None,
+        "sport": sport or None,
+        "activity_type": SPORT_MAP.get(sport, sport or ""),
+        "distance_km": distance_km,
+        "duration": duration,
+        "total_ascent": int(ascent) if ascent is not None else None,
+        "total_descent": int(descent) if descent is not None else None,
+        "calories": session.get("total_calories"),
+        "avg_heart_rate": avg_hr,
+        "max_heart_rate": max_hr,
+        "avg_power": avg_power,
+        "max_power": max_power,
+        "normalized_power": _normalized_power([p for p in powers if p is not None]),
+        "avg_cadence": avg_cad,
+        "max_cadence": max_cad,
+        "avg_speed_kmh": avg_speed,
+        "max_speed_kmh": max_speed,
+        "sample_count": len(samples),
+        "raw_record_count": raw_count if raw_count is not None else len(samples),
+        "track_point_count": len(track),
+        "raw_track_count": raw_track_count if raw_track_count is not None else len(track),
+        "downsampled": downsampled,
+        "has_gps": bool(track),
+        # ---- 预留模块：全部指标槽位 + 实际含有哪些指标 ----
+        "metrics": metrics,
+        "available_metrics": [key for key, stat in metrics.items() if stat["count"] > 0],
+        # ---- 可能带有的进阶指标（没有则为 None） ----
+        "threshold_power": session.get("threshold_power"),
+        "training_stress_score": session.get("training_stress_score"),
+        "intensity_factor": session.get("intensity_factor"),
+        "total_training_effect": session.get("total_training_effect"),
+        "total_cycles": session.get("total_cycles"),
+        "avg_temperature": session.get("avg_temperature") or metrics["temperature"]["avg"],
+        "max_temperature": session.get("max_temperature") or metrics["temperature"]["max"],
+        "avg_grade": metrics["grade"]["avg"],
+    }
+    return summary, metrics
+
+
 def parse_fit_file(data: bytes) -> dict:
     """完整解析 FIT 文件，返回 summary / samples / track / device / file。
 
@@ -240,101 +365,19 @@ def parse_fit_file(data: bytes) -> dict:
     samples = _downsample(samples, MAX_SAMPLES)
 
     # ---- 汇总 ----
-    hearts = [s["heart_rate"] for s in samples]
-    powers = [s["power"] for s in samples]
-    cads = [s["cadence"] for s in samples]
-    speeds = [s["speed_kmh"] for s in samples]
-    alts = [s["altitude"] for s in samples]
-
-    sport = str(session.get("sport") or "").lower()
-    duration = session.get("total_timer_time") or session.get("total_elapsed_time")
-    if not duration:
-        times = [s["t"] for s in samples if s["t"] is not None]
-        duration = (max(times) - min(times)) if times and len(times) > 1 else 0
-    duration = int(duration or 0)
-
-    distance_km = round((session.get("total_distance") or 0) / 1000, 2)
-    if not distance_km:
-        distance_km = round(max((s["distance_km"] for s in samples), default=0), 2)
-
-    ascent = session.get("total_ascent")
-    descent = session.get("total_descent")
-    valid_alts = [a for a in alts if a is not None]
-    if ascent is None and len(valid_alts) > 1:
-        ascent = int(sum(max(valid_alts[i + 1] - valid_alts[i], 0) for i in range(len(valid_alts) - 1)))
-    if descent is None and len(valid_alts) > 1:
-        descent = int(sum(max(valid_alts[i] - valid_alts[i + 1], 0) for i in range(len(valid_alts) - 1)))
-
-    if session.get("avg_heart_rate") is not None:
-        avg_hr, max_hr = session["avg_heart_rate"], session.get("max_heart_rate")
-    else:
-        avg_hr, max_hr = _stats(hearts)
-    if session.get("avg_power") is not None:
-        avg_power, max_power = session["avg_power"], session.get("max_power")
-    else:
-        avg_power, max_power = _stats(powers)
-    if session.get("avg_cadence") is not None:
-        avg_cad, max_cad = session["avg_cadence"], session.get("max_cadence")
-    else:
-        avg_cad, max_cad = _stats(cads)
-
-    avg_speed = session.get("avg_speed")
-    max_speed = session.get("max_speed")
-    if avg_speed is None:
-        avg_speed, _ = _stats(speeds)
-        max_speed = max((s for s in speeds if s is not None), default=None)
-    else:
-        avg_speed = round(avg_speed * 3.6, 2)
-        max_speed = round(max_speed * 3.6, 2) if max_speed is not None else None
-
-    # ---- 各指标统计：前端据此决定画曲线还是留空白槽位 ----
-    metrics = {key: _metric_stats(samples, key) for key in METRIC_SPEC}
-    # 文件里完全没有的指标，从采样点中剔除该键（避免 JSON 里塞满 null）
-    for key, stat in metrics.items():
-        if stat["count"] == 0:
-            for s in samples:
-                s.pop(key, None)
-
-    if start_dt is None and isinstance(session.get("start_time"), datetime):
-        start_dt = session["start_time"]
-
-    summary = {
-        "start_time": start_dt.isoformat() if isinstance(start_dt, datetime) else None,
-        "sport": sport or None,
-        "activity_type": SPORT_MAP.get(sport, sport or ""),
-        "distance_km": distance_km,
-        "duration": duration,
-        "total_ascent": int(ascent) if ascent is not None else None,
-        "total_descent": int(descent) if descent is not None else None,
-        "calories": session.get("total_calories"),
-        "avg_heart_rate": avg_hr,
-        "max_heart_rate": max_hr,
-        "avg_power": avg_power,
-        "max_power": max_power,
-        "normalized_power": _normalized_power([p for p in powers if p is not None]),
-        "avg_cadence": avg_cad,
-        "max_cadence": max_cad,
-        "avg_speed_kmh": avg_speed,
-        "max_speed_kmh": max_speed,
-        "sample_count": len(samples),
-        "raw_record_count": raw_count,
-        "track_point_count": len(track),
-        "raw_track_count": raw_track_count,
-        "downsampled": samples_downsampled or raw_track_count > len(track),
-        "has_gps": bool(track),
-        # ---- 预留模块：全部指标槽位 + 该文件实际含有哪些指标 ----
-        "metrics": metrics,
-        "available_metrics": [key for key, stat in metrics.items() if stat["count"] > 0],
-        # ---- session 里可能带有的进阶指标（没有则为 None） ----
-        "threshold_power": session.get("threshold_power"),
-        "training_stress_score": session.get("training_stress_score"),
-        "intensity_factor": session.get("intensity_factor"),
-        "total_training_effect": session.get("total_training_effect"),
-        "total_cycles": session.get("total_cycles"),
-        "avg_temperature": session.get("avg_temperature") or metrics["temperature"]["avg"],
-        "max_temperature": session.get("max_temperature") or metrics["temperature"]["max"],
-        "avg_grade": metrics["grade"]["avg"],
-    }
+    # 计算全部收进 summarize_samples：Strava 拉回来的记录走同一个函数，
+    # 否则两条来源的字段与精度会各自漂开，前端无法共用「数据曲线」。
+    summary, _ = summarize_samples(
+        samples,
+        track,
+        start_dt=start_dt,
+        sport=str(session.get("sport") or ""),
+        distance_km=(session.get("total_distance") or 0) / 1000,
+        session=session,
+        raw_count=raw_count,
+        raw_track_count=raw_track_count,
+        downsampled=samples_downsampled or raw_track_count > len(track),
+    )
 
     return {
         "summary": summary,

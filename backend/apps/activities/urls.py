@@ -1,7 +1,13 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from .views import ActivityViewSet, FitHistoryView, FitUploadView, MatrixView
+from .views import (
+    ActivityViewSet,
+    FitHistoryView,
+    FitUploadView,
+    MatrixView,
+    PullActivitiesView,
+)
 
 router = DefaultRouter()
 router.register("", ActivityViewSet, basename="activity")
@@ -10,5 +16,6 @@ router.register("", ActivityViewSet, basename="activity")
 urlpatterns = [
     path("matrix/", MatrixView.as_view(), name="activity-matrix"),
     path("upload-fit/", FitUploadView.as_view(), name="activity-upload-fit"),
+    path("pull/", PullActivitiesView.as_view(), name="activity-pull"),
     path("fit-history/", FitHistoryView.as_view(), name="activity-fit-history"),
 ] + router.urls

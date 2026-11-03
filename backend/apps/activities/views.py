@@ -13,10 +13,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.activities.tasks import sync_activity_to_platform
-from apps.platforms.models import Platform
+from apps.platforms.adapters import AdapterError
+from apps.platforms.models import Platform, PlatformAccount
 
 from .fit_utils import FitParseUnavailable, parse_fit_file
 from .models import Activity, ActivityFitDetail, ActivityFitFile, ActivitySyncState
+from .pull import DEFAULT_DETAIL_LIMIT, pull_from_account
 from .serializers import (
     ActivityFitDetailSerializer,
     ActivitySerializer,
@@ -24,6 +26,7 @@ from .serializers import (
     FitHistorySerializer,
 )
 from .tasks import sync_activity_task  # noqa: F401 （供 Celery 异步路径复用）
+from .tcx import build_tcx, tcx_filename
 
 MAX_FIT_SIZE = 20 * 1024 * 1024  # 20MB
 TYPE_LABEL = {"cycling": "骑行", "running": "跑步", "swimming": "游泳", "hiking": "徒步"}
@@ -101,6 +104,35 @@ class ActivityViewSet(
         state = sync_activity_to_platform(activity.id, int(platform_id))
         return Response(ActivitySyncStateSerializer(state).data)
 
+    @action(detail=True, methods=["get"], url_path="export-tcx")
+    def export_tcx(self, request, pk=None):
+        """GET /api/activities/{id}/export-tcx/ —— 按采样点合成 TCX。
+
+        与 export-fit 的分工：那个吐**原始字节**（无损，首选），这个在现场合成。
+        只有在来源本身拿不到文件时才有必要 —— 典型就是 Strava：API 不提供
+        activity 的文件下载，而 Garmin 只接受文件，中间必须有人补这一环。
+        """
+        activity = self.get_object()
+        detail = ActivityFitDetail.objects.filter(activity=activity).first()
+        if detail is None:
+            return Response(
+                {"detail": "该活动还没有解析详情，没有可合成的采样点"}, status=409
+            )
+
+        try:
+            xml = build_tcx(activity, detail)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=409)
+
+        data = xml.encode("utf-8")
+        filename = f"{tcx_filename(activity.name)}.tcx"
+        resp = HttpResponse(data, content_type="application/vnd.garmin.tcx+xml")
+        resp["Content-Disposition"] = (
+            f'attachment; filename="activity.tcx"; filename*=UTF-8\'\'{quote(filename)}'
+        )
+        resp["Content-Length"] = str(len(data))
+        return resp
+
     @action(detail=True, methods=["get", "delete"], url_path="fit")
     def fit_detail(self, request, pk=None):
         """GET /api/activities/{id}/fit/ —— 该活动的 FIT 解析详情
@@ -133,6 +165,69 @@ class ActivityViewSet(
         if detail is None:
             return Response({"detail": "该活动尚无 FIT 解析详情"}, status=404)
         return Response(ActivityFitDetailSerializer(detail).data)
+
+
+class PullActivitiesView(APIView):
+    """POST /api/activities/pull/ —— 从平台账号拉取活动入库（只读通道）
+
+    与「同步任务」的分工：同步任务是「源 → 目标」的转发，中途必须有原始文件；
+    这里只是把平台上的记录读进本地，用于查看与导出 TCX。Strava 就是只能走这条路
+    的来源 —— 它的 API 不提供活动文件下载。
+
+    参数：`account_id`（推荐）或 `platform`（取该平台最近绑定的真实账号），
+    `days`（默认 30，上限 365），`detail_limit`（默认 10，受读限流约束），
+    `with_detail=false` 只入库列表不拉曲线。
+    """
+
+    def post(self, request):
+        account_id = request.data.get("account_id")
+        platform_code = str(request.data.get("platform") or "").strip()
+
+        accounts = PlatformAccount.objects.filter(
+            user=request.user, status="active"
+        ).select_related("platform")
+        account = None
+        if account_id not in (None, ""):
+            try:
+                account = accounts.filter(pk=int(account_id)).first()
+            except (TypeError, ValueError):
+                return Response({"detail": "account_id 不是有效数字"}, status=400)
+        elif platform_code:
+            account = accounts.filter(platform__code=platform_code).order_by("-id").first()
+        else:
+            return Response({"detail": "请提供 account_id 或 platform"}, status=400)
+
+        if account is None:
+            return Response(
+                {"detail": "找不到可用的平台账号，请先在「账号管理」完成绑定"}, status=404
+            )
+        if account.is_demo:
+            return Response(
+                {"detail": "该账号是演示身份，读不到真实数据，请先完成平台授权"}, status=400
+            )
+
+        raw_detail = request.data.get("with_detail", True)
+        with_detail = raw_detail not in (False, 0, "0", "false", "False")
+
+        try:
+            stats = pull_from_account(
+                account,
+                days=request.data.get("days") or 30,
+                detail_limit=request.data.get("detail_limit", DEFAULT_DETAIL_LIMIT),
+                with_detail=with_detail,
+            )
+        except AdapterError as exc:
+            # 平台侧拒绝（限流 / 授权失效 / 未实现）必须原样传给用户，
+            # 否则他只会看到「同步失败」而不知道该等 15 分钟还是重新授权
+            return Response({"detail": str(exc)}, status=502)
+
+        return Response(
+            {
+                "account_id": account.id,
+                "platform": account.platform.code,
+                **stats,
+            }
+        )
 
 
 class FitUploadView(APIView):

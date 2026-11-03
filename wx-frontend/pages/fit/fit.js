@@ -9,6 +9,9 @@ Page({
     uploading: false,
     error: "",
     list: [],
+    // 可用的 Strava 账号 id（0 表示还没绑真实账号）；用来决定是否显示同步入口
+    stravaAccountId: 0,
+    pulling: false,
   },
 
   onShow() {
@@ -30,9 +33,11 @@ Page({
 
   load() {
     this.setData({ error: "" });
-    return api.activities
-      .fitHistory()
-      .then((rows) => {
+    // 账号列表只用来判断「能不能从平台同步」。它失败不该拖垮整个页面 ——
+    // 否则一次 /accounts/ 抖动会把已导入的历史也一起变成错误态。
+    const accounts = api.platforms.accounts().catch(() => []);
+    return Promise.all([api.activities.fitHistory(), accounts])
+      .then(([rows, accs]) => {
         const list = (rows || []).map((r) => ({
           id: r.id,
           activity_id: r.activity_id,
@@ -49,7 +54,18 @@ Page({
           has_gps: r.has_gps,
           device_name: r.device_name || "未知设备",
         }));
-        this.setData({ list, loading: false });
+        // 演示身份读不到真实数据，别给它一个点了必然失败的按钮
+        const strava = (accs || []).find(
+          (a) =>
+            a.platform &&
+            a.platform.code === "strava" &&
+            !/^(mock|demo)-/.test(a.platform_user_id || ""),
+        );
+        this.setData({
+          list,
+          stravaAccountId: strava ? strava.id : 0,
+          loading: false,
+        });
       })
       .catch((err) =>
         this.setData({
@@ -58,6 +74,71 @@ Page({
             err.status === 0 ? offlineText() : err.message,
         }),
       );
+  },
+
+  /**
+   * 从 Strava 拉取记录。
+   *
+   * 这是「只读」通道：Strava 的 API 不提供活动文件下载，所以它没法走同步任务
+   * （那条路中间必须有原始文件）。拉进来的是采样点，够画曲线、够导出 TCX。
+   */
+  pullFromStrava() {
+    if (this.data.pulling) return;
+    if (!this.data.stravaAccountId) {
+      wx.showModal({
+        title: "还没有绑定 Strava",
+        content: "先到「账号管理」绑定 Strava，授权完成后再回来同步。",
+        confirmText: "去绑定",
+        success: (r) => {
+          if (r.confirm) wx.navigateTo({ url: "/pages/accounts/accounts" });
+        },
+      });
+      return;
+    }
+    wx.showModal({
+      title: "从 Strava 同步",
+      content:
+        "拉取最近 30 天的骑行记录。最近 5 条会一并下载曲线与轨迹" +
+        "（受平台读取频率限制，再多请过一会儿再同步）。",
+      confirmText: "开始同步",
+      success: (r) => {
+        if (r.confirm) this.doPull();
+      },
+    });
+  },
+
+  doPull() {
+    this.setData({ pulling: true });
+    wx.showLoading({ title: "同步中…", mask: true });
+    // 只取 5 条详情：每条是一次平台请求，而云托管单次调用上限 15 秒，
+    // 取 10 条很容易在中途被掐断，用户看到的是「同步失败」而不是部分成功。
+    api.activities
+      .pull({ account_id: this.data.stravaAccountId, days: 30, detail_limit: 5 })
+      .then((res) => {
+        wx.hideLoading();
+        this.setData({ pulling: false });
+        const parts = [`新增 ${res.imported || 0} 条`];
+        if (res.duplicate) parts.push(`已存在 ${res.duplicate} 条`);
+        if (res.detail_imported) parts.push(`含曲线 ${res.detail_imported} 条`);
+        const errors = res.errors || [];
+        wx.showModal({
+          title: res.imported ? "同步完成" : "没有新记录",
+          content:
+            parts.join("，") +
+            (errors.length ? `\n\n部分记录未取到曲线：${errors[0]}` : ""),
+          showCancel: false,
+        });
+        this.load();
+      })
+      .catch((err) => {
+        wx.hideLoading();
+        this.setData({ pulling: false });
+        wx.showModal({
+          title: "同步失败",
+          content: err.message || "请稍后重试",
+          showCancel: false,
+        });
+      });
   },
 
   /** 从聊天记录里选择 .fit 文件（小程序唯一能拿到本地文件的途径） */

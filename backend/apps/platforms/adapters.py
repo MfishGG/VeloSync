@@ -12,7 +12,8 @@ import logging
 import random
 import time
 from abc import ABC, abstractmethod
-from datetime import timedelta
+from datetime import datetime, timedelta
+from datetime import timezone as dt_timezone
 
 import requests
 from django.utils import timezone
@@ -21,6 +22,46 @@ from .models import PlatformAccount
 from .tokens import ensure_fresh_token
 
 logger = logging.getLogger(__name__)
+
+#: Strava 的 sport_type（CamelCase）→ 本项目统一的运动类型。
+#: 未登记的一律留空，由界面显示「运动」而不去猜 —— 猜错比留空更糟。
+STRAVA_SPORT_MAP = {
+    "ride": "cycling",
+    "virtualride": "cycling",
+    "ebikeride": "cycling",
+    "mountainbikeride": "cycling",
+    "gravelride": "cycling",
+    "emountainbikeride": "cycling",
+    "handcycle": "cycling",
+    "velomobile": "cycling",
+    "run": "running",
+    "trailrun": "running",
+    "virtualrun": "running",
+    "swim": "swimming",
+    "hike": "hiking",
+    "walk": "hiking",
+}
+
+#: 拉 streams 时固定要的键。Strava 只返回该活动实际存在的键（没有功率就没有 watts）
+STRAVA_STREAM_KEYS = "time,latlng,distance,altitude,velocity_smooth,heartrate,cadence,watts,temp"
+
+
+def _parse_utc(value):
+    """解析 Strava 的 ISO 时间（`2026-11-01T00:00:00Z`）。
+
+    不能用 `start_date_local`：那个不带时区，`fromisoformat` 出来的 naive 值
+    会被 Django 按 UTC 存进去，国内用户的活动时间会整体偏移 8 小时。
+    """
+    if not value:
+        return None
+    text = str(value).strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, dt_timezone.utc)
+    return parsed.astimezone(dt_timezone.utc)
 
 
 class AdapterError(Exception):
@@ -250,6 +291,114 @@ class StravaAdapter(OAuthAdapter):
     UPLOAD_POLL_INTERVAL = 2.0
     UPLOAD_POLL_TIMEOUT = 60.0
 
+    # ---------- 读 ----------
+
+    def _get_json(self, url: str, params: dict | None = None):
+        """统一处理 Strava 读接口的错误语义。
+
+        429 单独说清楚：新应用的读配额是 **每 15 分钟 100 次、每天 1000 次**，
+        而且连续重试会延长冷却窗口。把它混进「请求失败」里，用户只会不停重试，
+        结果是从冷却 15 分钟变成 1 小时。
+        """
+        token = self.account.get_access_token()
+        try:
+            resp = requests.get(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                params=params,
+                timeout=(10, 60),
+            )
+        except requests.RequestException as exc:
+            raise AdapterError(f"请求 Strava 失败（网络错误）：{exc}") from exc
+
+        body = _json_or_none(resp)
+        if resp.status_code == 429:
+            raise AdapterError(
+                "Strava 读取限流（429）：配额为每 15 分钟 100 次、每天 1000 次。"
+                "请等待 15 分钟后重试；连续重试会延长冷却时间"
+            )
+        if resp.status_code == 401:
+            raise AdapterError("Strava 授权已失效（401），请到「账号管理」重新授权")
+        if resp.status_code >= 400:
+            raise AdapterError(
+                f"Strava 返回 HTTP {resp.status_code}：{_short_reason(body, resp)}"
+            )
+        if body is None:
+            raise AdapterError(f"Strava 返回的不是 JSON（HTTP {resp.status_code}）")
+        return body
+
+    def fetch_activities(self, since=None) -> list[dict]:
+        """拉取活动列表（`GET /athlete/activities`）。
+
+        注意这里**拿不到文件**：Strava 的 api/v3 没有导出端点，`fit_hash` 恒为空。
+        要曲线与轨迹必须再对每条调 `fetch_activity_streams` —— 那是一活动一次请求，
+        正因如此才要做成「按需」，而不是同步时全量拉详情。
+        """
+        self._require_config()
+        base = (self.account.platform.api_base or "").rstrip("/")
+        params: dict = {"per_page": 100}
+        if since is not None:
+            params["after"] = int(since.timestamp())
+
+        collected: list[dict] = []
+        # 上限 10 页 = 1000 条。再多说明该用增量同步，而不是把限流全花在翻页上
+        for page in range(1, 11):
+            params["page"] = page
+            body = self._get_json(f"{base}/athlete/activities", params=params)
+            if not isinstance(body, list):
+                raise AdapterError(
+                    f"Strava 活动列表返回了非预期结构：{str(body)[:120]}"
+                )
+            if not body:
+                break
+            collected.extend(body)
+            if len(body) < int(params["per_page"]):
+                break
+
+        items = [self._to_activity(raw) for raw in collected]
+        # 没有开始时间的记录进不了活动表（该字段非空），直接丢掉而不是塞当前时间
+        return [item for item in items if item["start_timestamp"] is not None]
+
+    @staticmethod
+    def _to_activity(raw: dict) -> dict:
+        """Strava 活动摘要 → 引擎约定的字典结构。"""
+        sport = str(raw.get("sport_type") or raw.get("type") or "").lower()
+        return {
+            "remote_id": str(raw.get("id") or ""),
+            "name": raw.get("name") or "未命名活动",
+            "start_timestamp": _parse_utc(raw.get("start_date")),
+            "activity_type": STRAVA_SPORT_MAP.get(sport, ""),
+            # 用 moving_time 而不是 elapsed_time：骑行看重的是移动时间，
+            # elapsed 会把等红灯、休息都算进去，与码表上看到的对不上
+            "duration": int(raw.get("moving_time") or raw.get("elapsed_time") or 0),
+            "distance": round(float(raw.get("distance") or 0) / 1000, 2),
+            "fit_hash": "",
+        }
+
+    def fetch_activity_streams(self, remote_id, keys: str = STRAVA_STREAM_KEYS) -> dict:
+        """拿一条活动的 streams，返回扁平化的 `{键: 序列}`。
+
+        `key_by_type=true` 让响应变成 `{"time": {"data": [...]}}`；
+        不带这个参数时返回的是一个数组，解析代码得跟着改 —— 这里的形状是固定的。
+        """
+        self._require_config()
+        base = (self.account.platform.api_base or "").rstrip("/")
+        body = self._get_json(
+            f"{base}/activities/{remote_id}/streams",
+            params={"keys": keys, "key_by_type": "true"},
+        )
+        if not isinstance(body, dict):
+            raise AdapterError(f"Strava streams 返回了非预期结构：{str(body)[:120]}")
+
+        streams: dict = {}
+        for key, payload in body.items():
+            data = (payload or {}).get("data") if isinstance(payload, dict) else None
+            if isinstance(data, list):
+                streams[key] = data
+        if not streams.get("time"):
+            raise AdapterError("Strava 没有返回时间序列（该活动可能未记录采样点）")
+        return streams
+
     def revoke_token(self) -> bool:
         """调用 Strava deauthorize 真正撤销授权。"""
         token = self.account.get_access_token()
@@ -357,6 +506,8 @@ ADAPTERS: dict[str, type[BaseAdapter]] = {
     "mock": MockAdapter,
     "igpsport": IGPSPORTAdapter,
     "garmin": GarminAdapter,
+    # 中国区是独立账号体系与独立域名，但与国际区共用同一套接口语义
+    "garmin_cn": GarminAdapter,
     "strava": StravaAdapter,
     "coros": CorosAdapter,
 }

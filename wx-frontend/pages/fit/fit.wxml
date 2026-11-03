@@ -14,6 +14,19 @@
     <view class="upload__hint" catchtap="goGuide">不知道怎么导入？点这里看步骤（含佳明导出方法）</view>
   </view>
 
+  <!-- 从平台同步：Strava 只提供数据、不提供文件，所以单独一条入口 -->
+  <view class="card" bindtap="pullFromStrava">
+    <view class="row-between">
+      <view class="grow">
+        <view class="card__title" style="margin-bottom:6rpx">从 Strava 同步</view>
+        <view class="t-xs t3">
+          {{stravaAccountId ? '拉取最近 30 天的骑行记录，可直接查看曲线与轨迹' : '还没有绑定 Strava，点击查看如何绑定'}}
+        </view>
+      </view>
+      <view class="btn btn--primary btn--sm">{{pulling ? '同步中…' : (stravaAccountId ? '开始同步' : '去绑定')}}</view>
+    </view>
+  </view>
+
   <view class="alert alert--danger" wx:if="{{error}}">
     <view>{{error}}</view>
     <view class="btn btn--ghost btn--sm alert__action" bindtap="reload">重新加载</view>

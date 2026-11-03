@@ -115,6 +115,23 @@ const activities = {
   /** FIT 导入历史（轻量列表，不含 samples/track） */
   fitHistory: () => api("/activities/fit-history/"),
 
+  /**
+   * 从平台账号拉取活动（只读通道）。
+   *
+   * 与「同步任务」不同：同步任务是源 → 目标的转发，中途必须有原始文件；
+   * 而 Strava 的 API 不提供文件下载，只能这样把记录读进本地再查看 / 导出。
+   * `detail_limit` 受读限流约束（每 15 分钟 100 次），默认只给最近 10 条取曲线。
+   */
+  pull: (payload) => api("/activities/pull/", { method: "POST", data: payload }),
+
+  /**
+   * 导出 TCX（备份格式，可导入佳明）。
+   *
+   * 返回的是 XML **文本**而不是二进制：小程序正式环境走 callContainer，
+   * 没有可用的公网下载地址，`wx.downloadFile` 根本用不上。
+   */
+  exportTcx: (id) => api(`/activities/${id}/export-tcx/`),
+
   /** 上传 FIT 文件（filePath 为 wx.chooseMessageFile 得到的临时路径） */
   uploadFit: (filePath, fileName) =>
     upload("/activities/upload-fit/", filePath, "file", {}, fileName),

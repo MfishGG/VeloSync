@@ -23,11 +23,12 @@ Page({
     id: 0,
     loading: true,
     error: "",
+    exporting: false,
     detail: null,
     summary: null,
     device: null,
     title: "FIT 详情",
-    fileSizeText: "",
+    fileMetaText: "",
     hashShort: "",
     cards: [],
     // 图表控制
@@ -133,7 +134,11 @@ Page({
           summary: s,
           device: detail.device || {},
           title: `${fmt.sportLabel(s.activity_type)} · ${detail.file_name || "FIT"}`,
-          fileSizeText: fmtFileSize(detail.file_size),
+          // 平台来源（Strava）没有文件，file_size 为 0；这时候别印一个「0 B」，
+          // 它只会让人以为文件损坏了
+          fileMetaText: detail.file_size
+            ? `${detail.file_name || "FIT"} · ${fmtFileSize(detail.file_size)}`
+            : detail.file_name || "运动记录",
           hashShort: String(detail.file_hash || "").slice(0, 12),
           cards: buildCards(s, detail),
           overlayKeys: metrics.defaultOverlayKeys(s.available_metrics),
@@ -159,6 +164,89 @@ Page({
             err.status === 0 ? offlineText() : err.message,
         }),
       );
+  },
+
+  /**
+   * 导出 TCX：把当前记录合成为文件，转发到聊天后可在电脑上导入佳明。
+   *
+   * 为什么不是「下载」：小程序正式环境走云托管通道（callContainer），
+   * 没有可用的公网地址，`wx.downloadFile` 用不上。所以取回 XML 文本 →
+   * 写入本地 → `wx.shareFileMessage` 转发，这是唯一能真正把文件交到用户手上的路径。
+   *
+   * 只对「没有原始文件」的来源有意义（Strava）。从 FIT 导入的记录本来就该直接
+   * 导出原始文件，那条路无损。
+   */
+  exportTcx() {
+    if (this.data.exporting) return;
+    const id = this.data.id;
+    if (!id) return;
+
+    this.setData({ exporting: true });
+    wx.showLoading({ title: "生成中…", mask: true });
+    api.activities
+      .exportTcx(id)
+      .then((xml) => {
+        wx.hideLoading();
+        this.setData({ exporting: false });
+        this.shareTcx(xml);
+      })
+      .catch((err) => {
+        wx.hideLoading();
+        this.setData({ exporting: false });
+        wx.showModal({
+          title: "导出失败",
+          content: err.message || "请稍后重试",
+          showCancel: false,
+        });
+      });
+  },
+
+  shareTcx(xml) {
+    if (typeof xml !== "string" || xml.indexOf("<TrainingCenterDatabase") < 0) {
+      wx.showModal({
+        title: "导出失败",
+        content: "生成的内容不是有效的 TCX 文件，请稍后重试。",
+        showCancel: false,
+      });
+      return;
+    }
+    if (typeof wx.shareFileMessage !== "function") {
+      wx.showModal({
+        title: "当前微信版本不支持",
+        content: "转发文件需要较新的微信版本，请升级后再试。",
+        showCancel: false,
+      });
+      return;
+    }
+
+    const fileName = `velosync-${this.data.id}.tcx`;
+    const filePath = `${wx.env.USER_DATA_PATH}/${fileName}`;
+    try {
+      wx.getFileSystemManager().writeFileSync(filePath, xml, "utf8");
+    } catch (e) {
+      wx.showModal({
+        title: "导出失败",
+        content: "写入本地文件失败，请清理小程序存储空间后重试。",
+        showCancel: false,
+      });
+      return;
+    }
+
+    wx.shareFileMessage({
+      filePath,
+      fileName,
+      success: () => {},
+      fail: (err) => {
+        if (err && /cancel/.test(err.errMsg || "")) return;
+        wx.showModal({
+          title: "无法转发文件",
+          content:
+            "文件已经生成，但转发到聊天失败。\n" +
+            "可以稍后重试，或先把记录留在小程序里查看曲线。",
+          showCancel: false,
+        });
+      },
+    });
   },
 
   updateMarker(index) {
