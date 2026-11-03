@@ -94,4 +94,70 @@
   </block>
 
   <view class="safe-bottom"></view>
+
+  <!-- 账号密码绑定（佳明这类没有开放 OAuth 的平台） -->
+  <view class="sheet-mask" wx:if="{{bindSheet}}" bindtap="closeBindSheet"></view>
+  <view class="sheet" wx:if="{{bindSheet}}">
+    <view class="sheet__title">{{bindSheet.name}}</view>
+    <view class="sheet__hint">{{bindSheet.hint}}</view>
+
+    <block wx:if="{{bindSheet.step === 'password'}}">
+      <view class="field">
+        <view class="field__label">账号</view>
+        <input
+          class="field__input"
+          value="{{bindSheet.username}}"
+          data-field="username"
+          bindinput="onBindInput"
+          placeholder="邮箱或手机号"
+          placeholder-class="field__ph"
+        />
+      </view>
+      <view class="field">
+        <view class="field__label">密码</view>
+        <input
+          class="field__input"
+          password
+          value="{{bindSheet.password}}"
+          data-field="password"
+          bindinput="onBindInput"
+          placeholder="仅用于登录，不会保存"
+          placeholder-class="field__ph"
+        />
+      </view>
+    </block>
+
+    <block wx:else>
+      <view class="field">
+        <view class="field__label">验证码</view>
+        <input
+          class="field__input"
+          type="number"
+          value="{{bindSheet.verifyCode}}"
+          data-field="verifyCode"
+          bindinput="onBindInput"
+          placeholder="短信或邮件里收到的验证码"
+          placeholder-class="field__ph"
+        />
+      </view>
+    </block>
+
+    <view class="alert alert--danger sheet__error" wx:if="{{bindSheet.error}}">
+      {{bindSheet.error}}
+    </view>
+
+    <view class="sheet__actions">
+      <view class="btn btn--ghost" bindtap="closeBindSheet">取消</view>
+      <view
+        class="btn btn--primary grow"
+        wx:if="{{bindSheet.step === 'password'}}"
+        bindtap="submitPassword"
+      >
+        {{bindSheet.busy ? '登录中…' : '登录并绑定'}}
+      </view>
+      <view class="btn btn--primary grow" wx:else bindtap="submitMfa">
+        {{bindSheet.busy ? '验证中…' : '提交验证码'}}
+      </view>
+    </view>
+  </view>
 </view>

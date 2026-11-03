@@ -54,3 +54,67 @@
 .acc:last-child {
   border-bottom: none;
 }
+
+/* ---------------- 账号密码绑定表单 ---------------- */
+/* 底部弹层：微信没有提供双输入框的 modal，只能自己画 */
+.sheet-mask {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 100;
+}
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 101;
+  background: var(--card);
+  border-radius: 32rpx 32rpx 0 0;
+  padding: 36rpx 32rpx calc(32rpx + env(safe-area-inset-bottom));
+  box-shadow: 0 -12rpx 40rpx rgba(15, 23, 42, 0.12);
+}
+.sheet__title {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: var(--t1);
+}
+.sheet__hint {
+  font-size: 22rpx;
+  color: var(--t3);
+  line-height: 1.6;
+  margin-top: 10rpx;
+}
+.sheet__error {
+  margin-top: 18rpx;
+}
+.sheet__actions {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 28rpx;
+}
+
+.field {
+  margin-top: 22rpx;
+}
+.field__label {
+  font-size: 22rpx;
+  color: var(--t2);
+  margin-bottom: 10rpx;
+}
+.field__input {
+  height: 88rpx;
+  padding: 0 24rpx;
+  border: 2rpx solid var(--line);
+  border-radius: 16rpx;
+  font-size: 28rpx;
+  color: var(--t1);
+  background: #fff;
+  box-sizing: border-box;
+}
+.field__ph {
+  color: var(--t3);
+}

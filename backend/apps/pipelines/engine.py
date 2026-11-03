@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta
 
 from django.utils import timezone
@@ -15,23 +16,15 @@ from django.utils import timezone
 from apps.activities.coords import wgs84_to_gcj02
 from apps.activities.dedup import find_duplicate
 from apps.activities.models import Activity, ActivityFitDetail, ActivitySyncState
-from apps.platforms.adapters import AdapterError, get_adapter
+from apps.activities.payload import activity_file
+from apps.activities.pull import DEFAULT_DETAIL_LIMIT, detail_exists, import_detail
+from apps.platforms.adapters import AdapterError, ActivityExists, get_adapter
 from apps.platforms.models import Platform
 from apps.pipelines.filters import FilterRegistry
 from apps.pipelines.spec import NON_ACTIVITY_CONTENTS, content_label, source_label
 from apps.synclogs.models import SyncLog
 
-def _local_fit_bytes(activity):
-    """取导入时留下的原始 FIT 字节；没有则返回 None。
-
-    `fit_file` 是 OneToOne 反向关系，关系不存在时 Django 抛
-    RelatedObjectDoesNotExist —— 它同时继承 ObjectDoesNotExist 和 AttributeError，
-    所以 getattr 的默认值能兜住，不需要 try。
-    """
-    fit_file = getattr(activity, "fit_file", None)
-    if not fit_file or not fit_file.data:
-        return None
-    return bytes(fit_file.data)
+logger = logging.getLogger(__name__)
 
 
 #: 解析 ISO 时间字符串，失败返回 None
@@ -132,8 +125,11 @@ class TaskPlanner:
         # 吞掉之后用户看到的是「执行完成：success（0 条已同步）」，
         # 而真相是「这个平台根本没实现」—— 用户完全无法判断是自己配错了还是产品没做完，
         # 日志也会一路显示成功。让它抛上去，由节点级 error 如实记录原因。
-        fetched = get_adapter(account).fetch_activities(since=start) or []
+        adapter = get_adapter(account)
+        fetched = adapter.fetch_activities(since=start) or []
         created: list[Activity] = []
+        #: (平台返回的条目, 本地活动)：稍后补拉曲线用
+        pairs: list[tuple[dict, Activity]] = []
         for item in fetched:
             ts = item.get("start_timestamp")
             stats["fetched"] += 1
@@ -146,6 +142,7 @@ class TaskPlanner:
             duplicate = find_duplicate(self.user, ts, item.get("fit_hash"))
             if duplicate:
                 created.append(duplicate)
+                pairs.append((item, duplicate))
                 continue
             activity = Activity.objects.create(
                 user=self.user,
@@ -160,7 +157,33 @@ class TaskPlanner:
             )
             stats["imported"] += 1
             created.append(activity)
+            pairs.append((item, activity))
+
+        stats["details"] = self._import_details(adapter, account, pairs)
         return created, stats
+
+    def _import_details(self, adapter, account, pairs) -> int:
+        """给来源活动补拉曲线（有限额）。
+
+        没有这一步，「Strava → 佳明」会在合成 TCX 时发现没有采样点 —— 而错误
+        信息是「无法获取原始文件」，指向的却是完全不相干的地方。限额沿用
+        `DEFAULT_DETAIL_LIMIT`：一条活动一次 API 调用，Strava 的读配额是
+        每 15 分钟 100 次，不能一次拉满。
+        """
+        if not pairs or not callable(getattr(adapter, "fetch_activity_streams", None)):
+            return 0
+
+        imported = 0
+        for item, activity in pairs[:DEFAULT_DETAIL_LIMIT]:
+            if detail_exists(activity):
+                continue
+            try:
+                import_detail(account, item, activity)
+                imported += 1
+            except Exception as exc:  # noqa: BLE001 —— 单条失败不拖垮整批
+                # 429 之类只影响这一条；日志里留一句，别让整次同步变成 error
+                logger.warning("补拉活动 %s 的曲线失败：%s", item.get("remote_id"), exc)
+        return imported
 
     # ---------- 载荷构建 ----------
     def build_payload(self, activity: Activity) -> tuple[dict, int]:
@@ -517,6 +540,18 @@ class PipelineEngine:
         return "、".join(labels) or "未选择"
 
     # ---------- 单条活动同步 ----------
+    def _source_adapter(self):
+        """来源平台的适配器；FIT 来源没有，构造不出来也返回 None。
+
+        取不到来源适配器不该中断同步：本地原始文件或采样点仍然够用。
+        """
+        if self.planner.source_type == "fit" or self.planner.source_account is None:
+            return None
+        try:
+            return get_adapter(self.planner.source_account)
+        except Exception:  # noqa: BLE001
+            return None
+
     def _sync_activity(self, activity, account, platform, adapter, dry_run: bool):
         options = self.pipeline.options or {}
         conflict = options.get("conflict") or "skip"
@@ -556,44 +591,55 @@ class PipelineEngine:
                 self.log("info", f"「{activity.name}」在 {platform.name} 已存在（ID {existed}），按冲突策略跳过", activity=activity)
                 return
 
-        # 取原始 FIT 字节。
+        # 取要上传的文件字节。
         #
         # 这里原来在 source_type == "fit" 时直接 `json.dumps(payload)` 当 FIT 上传。
         # Mock 平台不解析文件，所以看不出问题；一到真实平台（Strava）就变成
         # 「Invalid .FIT File Header」—— 一个完全指不回源头的错误。
-        # 现在优先取导入时留下的原始文件，拿不到就明确失败，绝不用 JSON 顶替。
-        fit_data = None
-        fit_error = ""
-        if self.planner.source_type == "fit":
-            fit_data = _local_fit_bytes(activity)
-            if not fit_data:
-                fit_error = "该活动没有保存原始 FIT 文件（多为改动前导入的，重新导入同一文件即可补齐）"
-        else:
-            try:
-                fit_data = adapter.download_fit(activity.source_activity_id or activity.id)
-            except Exception as exc:  # noqa: BLE001
-                fit_error = str(exc)
+        #
+        # 现在统一交给 activity_file：本地原始文件 → 来源平台下载 → 现场合成 TCX。
+        # 最后一档是 Strava 来源的唯一出路（api/v3 没有导出端点），此前这一步是
+        # 向**目标平台**要文件，语义上就是错的。
+        file_data, file_kind, fit_error = activity_file(
+            activity, self._source_adapter(), activity.source_activity_id
+        )
 
-        if not fit_data:
+        if not file_data:
             if platform.code == "mock":
                 # 演示平台不解析文件，JSON 足够
-                fit_data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                file_data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             else:
                 self.stats["failed"] += 1
                 if state:
                     state.status = "failed"
-                    state.error_message = f"无法获取原始 FIT 文件：{fit_error}"[:500]
+                    state.error_message = f"无法获取可上传的文件：{fit_error}"[:500]
                     state.save()
                 self.log(
                     "error",
-                    f"同步「{activity.name}」到 {platform.name} 失败：无法获取原始 FIT 文件"
+                    f"同步「{activity.name}」到 {platform.name} 失败：没有可上传的文件"
                     + (f"（{fit_error}）" if fit_error else ""),
                     activity=activity,
                 )
                 return
+        if file_kind == "tcx":
+            self.log(
+                "info",
+                f"「{activity.name}」的来源不提供原始文件，已用采样点合成 TCX（{len(file_data)} 字节）",
+                activity=activity,
+            )
 
         try:
-            remote_id = adapter.upload_fit(fit_data, name=activity.name)
+            remote_id = adapter.upload_fit(file_data, name=activity.name)
+        except ActivityExists as exc:
+            # 对方已经有这场活动：目的已经达到，不该记成失败让用户反复重试
+            self.stats["skipped"] += 1
+            if state:
+                state.status = "synced"
+                state.error_message = ""
+                state.synced_at = timezone.now()
+                state.save()
+            self.log("info", f"「{activity.name}」在 {platform.name} 上已有记录，跳过上传：{exc}", activity=activity)
+            return
         except Exception as exc:  # noqa: BLE001
             self.stats["failed"] += 1
             if state:

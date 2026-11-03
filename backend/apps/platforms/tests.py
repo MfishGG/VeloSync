@@ -308,17 +308,22 @@ class PlatformUserIdTests(TestCase):
 
 
 class _FakeResp:
-    """最小化的响应对象：只需要 status_code / json() / text。"""
+    """最小化的响应对象：只需要 status_code / json() / text / headers。"""
 
-    def __init__(self, status_code, body=None, text=""):
+    def __init__(self, status_code, body=None, text="", headers=None):
         self.status_code = status_code
         self._body = body
         self.text = text
+        self.headers = headers or {}
 
     def json(self):
         if self._body is None:
             raise ValueError("not json")
         return self._body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
 
 
 class StravaUploadTests(TestCase):
@@ -753,3 +758,409 @@ class CallbackLandingTests(TestCase):
             SyncLog.objects.filter(message__contains="oauth/token").exists(),
             "技术原因被丢掉了：结果页不展示是对的，但日志里必须留着",
         )
+
+
+# ============ 佳明账号密码渠道 ============
+#
+# 这条链路完全依赖佳明自家的移动端登录接口（非公开），所以测试的重点不是
+# 「佳明现在返回什么」，而是我们这一侧的契约：
+#   - 每一步失败都要能指出卡在哪；
+#   - 密码绝不落库、不进日志、不进异常信息；
+#   - 二次验证的中间态必须能跨请求续上（库里，不是内存）。
+
+import re
+
+from . import garmin_sso
+from .adapters import ActivityExists, AdapterError, GarminAdapter
+from .models import PendingLogin
+
+
+class _FakeSsoSession:
+    """假装是 requests.Session：login/verify_mfa 只用到 cookies / get / post。"""
+
+    def __init__(self, get_responses=None, post_responses=None):
+        from requests.utils import cookiejar_from_dict
+
+        self.cookies = cookiejar_from_dict({})
+        self.get_responses = list(get_responses or [])
+        self.post_responses = list(post_responses or [])
+        self.get_calls = []
+        self.post_calls = []
+
+    def get(self, url, **kwargs):
+        self.get_calls.append((url, kwargs))
+        return self.get_responses.pop(0)
+
+    def post(self, url, **kwargs):
+        self.post_calls.append((url, kwargs))
+        return self.post_responses.pop(0)
+
+
+OAUTH1_OK = _FakeResp(200, None, text="oauth_token=ot&oauth_token_secret=os")
+OAUTH2_OK = _FakeResp(
+    200, {"access_token": "at", "refresh_token": "rt", "expires_in": 3600}
+)
+
+
+class GarminSsoTests(TestCase):
+    def test_successful_login_returns_both_tokens(self):
+        session = _FakeSsoSession(
+            get_responses=[_FakeResp(200), OAUTH1_OK],
+            post_responses=[
+                _FakeResp(
+                    200,
+                    {"responseStatus": {"type": "SUCCESSFUL"}, "serviceTicketId": "ST-1"},
+                )
+            ],
+        )
+        with patch("apps.platforms.garmin_sso._consumer", return_value=("ck", "cs")):
+            with patch(
+                "apps.platforms.garmin_sso.requests.post", return_value=OAUTH2_OK
+            ) as post:
+                oauth1, oauth2 = garmin_sso.login("a@b.c", "pw-123", "garmin.com", session)
+
+        self.assertEqual(oauth1["oauth_token"], "ot")
+        self.assertEqual(oauth1["domain"], "garmin.com")
+        self.assertEqual(oauth2["access_token"], "at")
+        # 首次登录必须带 audience，刷新时不能带 —— 带错只会得到 401
+        self.assertEqual(post.call_args.kwargs["data"]["audience"], "GARMIN_CONNECT_MOBILE_ANDROID_DI")
+
+    def test_mfa_required_hands_back_state_for_second_step(self):
+        session = _FakeSsoSession(
+            get_responses=[_FakeResp(200)],
+            post_responses=[
+                _FakeResp(
+                    200,
+                    {
+                        "responseStatus": {"type": "MFA_REQUIRED"},
+                        "customerMfaInfo": {"mfaLastMethodUsed": "sms"},
+                    },
+                )
+            ],
+        )
+        with self.assertRaises(garmin_sso.MfaRequired) as ctx:
+            garmin_sso.login("a@b.c", "pw-123", "garmin.com", session)
+
+        self.assertEqual(ctx.exception.method, "sms")
+        state = ctx.exception.state
+        self.assertEqual(state["domain"], "garmin.com")
+        self.assertIn("login_params", state)
+        self.assertIn("cookies", state, "没有 cookie，验证码那一步就续不上同一个会话")
+
+    def test_verify_mfa_finishes_login(self):
+        session = _FakeSsoSession(
+            get_responses=[OAUTH1_OK],
+            post_responses=[
+                _FakeResp(
+                    200,
+                    {"responseStatus": {"type": "SUCCESSFUL"}, "serviceTicketId": "ST-2"},
+                )
+            ],
+        )
+        state = {"domain": "garmin.com", "login_params": {}, "cookies": {}, "mfa_method": "sms"}
+        with patch("apps.platforms.garmin_sso._session_with_cookies", return_value=session):
+            with patch("apps.platforms.garmin_sso._consumer", return_value=("ck", "cs")):
+                with patch("apps.platforms.garmin_sso.requests.post", return_value=OAUTH2_OK):
+                    _, oauth2 = garmin_sso.verify_mfa(state, "123456")
+
+        self.assertEqual(oauth2["access_token"], "at")
+        self.assertEqual(session.post_calls[0][1]["json"]["mfaMethod"], "sms")
+
+    def test_wrong_password_message_is_actionable(self):
+        session = _FakeSsoSession(
+            get_responses=[_FakeResp(200)],
+            post_responses=[
+                _FakeResp(
+                    200,
+                    {"responseStatus": {"type": "INCORRECT_CREDENTIALS", "message": "bad"}},
+                )
+            ],
+        )
+        with self.assertRaises(garmin_sso.GarminError) as ctx:
+            garmin_sso.login("a@b.c", "pw-123", "garmin.com", session)
+
+        self.assertEqual(ctx.exception.step, "login")
+        self.assertIn("账号和密码", str(ctx.exception))
+        self.assertNotIn("pw-123", str(ctx.exception), "密码绝不能进异常信息")
+
+    def test_rate_limit_explains_waiting(self):
+        session = _FakeSsoSession(get_responses=[_FakeResp(200)], post_responses=[_FakeResp(429)])
+        with self.assertRaises(garmin_sso.GarminError) as ctx:
+            garmin_sso.login("a@b.c", "pw-123", "garmin.com", session)
+        self.assertIn("限流", str(ctx.exception))
+        self.assertIn("1 小时", str(ctx.exception))
+
+    def test_html_response_is_reported_as_risk_control(self):
+        session = _FakeSsoSession(
+            get_responses=[_FakeResp(200)],
+            post_responses=[_FakeResp(200, None, text="<html>blocked</html>")],
+        )
+        with self.assertRaises(garmin_sso.GarminError) as ctx:
+            garmin_sso.login("a@b.c", "pw-123", "garmin.com", session)
+        self.assertIn("网页", str(ctx.exception))
+
+    def test_china_domain_is_used_end_to_end(self):
+        session = _FakeSsoSession(
+            get_responses=[_FakeResp(200), OAUTH1_OK],
+            post_responses=[
+                _FakeResp(
+                    200,
+                    {"responseStatus": {"type": "SUCCESSFUL"}, "serviceTicketId": "ST-3"},
+                )
+            ],
+        )
+        with patch("apps.platforms.garmin_sso._consumer", return_value=("ck", "cs")):
+            with patch("apps.platforms.garmin_sso.requests.post", return_value=OAUTH2_OK):
+                oauth1, _ = garmin_sso.login("a@b.cn", "pw", "garmin.cn", session)
+
+        self.assertEqual(oauth1["domain"], "garmin.cn")
+        self.assertIn("sso.garmin.cn", session.post_calls[0][0])
+
+
+class OAuth1SignatureTests(TestCase):
+    URL = "https://connectapi.garmin.com/oauth-service/oauth/exchange/user/2.0"
+
+    def _header(self, body):
+        with patch("apps.platforms.garmin_sso._consumer", return_value=("ck", "cs")):
+            with patch("apps.platforms.garmin_sso.time.time", return_value=1700000000):
+                with patch("apps.platforms.garmin_sso.secrets.token_hex", return_value="n0nce"):
+                    return garmin_sso._oauth1_header(
+                        "POST", self.URL, token="ot", token_secret="os", body=body
+                    )
+
+    def test_header_shape(self):
+        header = self._header({"audience": "GARMIN_CONNECT_MOBILE_ANDROID_DI"})
+        self.assertTrue(header.startswith("OAuth "))
+        self.assertIn('oauth_signature_method="HMAC-SHA1"', header)
+        self.assertIn('oauth_token="ot"', header)
+        self.assertIn("oauth_signature=", header)
+
+    def test_body_params_are_part_of_the_signature(self):
+        """表单体参数不进签名基串的话，佳明会回 401，而错误完全指不回这里。"""
+        with_audience = self._header({"audience": "X"})
+        without = self._header({})
+        self.assertNotEqual(
+            re.search(r'oauth_signature="([^"]+)"', with_audience).group(1),
+            re.search(r'oauth_signature="([^"]+)"', without).group(1),
+        )
+
+
+class GarminUploadTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("rider9", "r9@example.test", "pw-12345")
+        self.platform = make_platform(
+            "garmin",
+            name="Garmin Connect（国际区）",
+            auth_type="password",
+            api_base="https://connect.garmin.com",
+        )
+        self.account = PlatformAccount.objects.create(
+            user=self.user, platform=self.platform, platform_user_id="42"
+        )
+        self.account.set_tokens("at-1", "", expires_in=3600)
+        self.account.set_session(
+            {"oauth1": {"oauth_token": "ot", "oauth_token_secret": "os", "domain": "garmin.com"}}
+        )
+        self.account.save()
+
+    def _adapter(self):
+        return GarminAdapter(self.account)
+
+    def _ok(self, internal_id=987):
+        return _FakeResp(
+            200,
+            {"detailedImportResult": {"successes": [{"internalId": internal_id}], "failures": []}},
+        )
+
+    @patch("apps.platforms.adapters.requests.post")
+    def test_tcx_is_uploaded_with_tcx_extension(self, post):
+        post.return_value = self._ok()
+        xml = '<?xml version="1.0"?><TrainingCenterDatabase></TrainingCenterDatabase>'.encode()
+
+        self.assertEqual(self._adapter().upload_fit(xml, name="晨骑"), "987")
+        filename = post.call_args.kwargs["files"]["file"][0]
+        # 后缀决定了佳明按哪种格式解析：TCX 被当成 fit 只会得到一句「格式不支持」
+        self.assertTrue(filename.endswith(".tcx"), filename)
+
+    @patch("apps.platforms.adapters.requests.post")
+    def test_fit_keeps_fit_extension(self, post):
+        post.return_value = self._ok(555)
+        self.assertEqual(self._adapter().upload_fit(b"\x0e\x10\xd9\x07FIT", name="ride"), "555")
+        self.assertTrue(post.call_args.kwargs["files"]["file"][0].endswith(".fit"))
+
+    @patch("apps.platforms.adapters.requests.post")
+    def test_duplicate_is_not_a_failure(self, post):
+        post.return_value = _FakeResp(409, {"error": "Duplicate activity"})
+        with self.assertRaises(ActivityExists):
+            self._adapter().upload_fit(b"\x0e\x10FIT")
+
+    @patch("apps.platforms.adapters.requests.post")
+    def test_401_refreshes_with_oauth1_and_retries(self, post):
+        post.side_effect = [_FakeResp(401), self._ok(777)]
+        with patch(
+            "apps.platforms.adapters.garmin_sso.refresh",
+            return_value={"access_token": "at-2", "expires_in": 3600},
+        ) as refresh:
+            self.assertEqual(self._adapter().upload_fit(b"\x0e\x10FIT"), "777")
+
+        refresh.assert_called_once()
+        self.assertEqual(post.call_count, 2)
+        self.account.refresh_from_db()
+        self.assertEqual(self.account.get_access_token(), "at-2", "刷新后的令牌必须落库")
+
+    def test_missing_session_credential_is_explicit(self):
+        self.account.set_tokens("", "", expires_in=0)
+        self.account.clear_session()
+        self.account.token_expires_at = timezone.now() - timedelta(hours=1)
+        self.account.save()
+
+        with self.assertRaises(AdapterError) as ctx:
+            self._adapter().upload_fit(b"\x0e\x10FIT")
+        self.assertIn("重新绑定", str(ctx.exception))
+
+    def test_failure_message_from_garmin_is_surfaced(self):
+        with patch("apps.platforms.adapters.requests.post") as post:
+            post.return_value = _FakeResp(
+                200,
+                {
+                    "detailedImportResult": {
+                        "successes": [],
+                        "failures": [
+                            {"messages": [{"content": "The file is not a valid activity file."}]}
+                        ],
+                    }
+                },
+            )
+            with self.assertRaises(AdapterError) as ctx:
+                self._adapter().upload_fit(b"\x0e\x10FIT")
+        self.assertIn("not a valid activity file", str(ctx.exception))
+
+
+class PasswordBindTests(TestCase):
+    TOKENS = (
+        {"oauth_token": "ot", "oauth_token_secret": "os", "domain": "garmin.com"},
+        {"access_token": "at", "refresh_token": "rt", "expires_in": 3600},
+    )
+
+    def setUp(self):
+        self.user = User.objects.create_user("rider7", "r7@example.test", "pw-12345")
+        self.platform = make_platform(
+            "garmin",
+            name="Garmin Connect（国际区）",
+            auth_type="password",
+            api_base="https://connect.garmin.com",
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    @patch("apps.platforms.views.garmin_sso.profile", return_value={"profileId": 42, "displayName": "小鱼"})
+    @patch("apps.platforms.views.garmin_sso.login", return_value=TOKENS)
+    def test_bind_creates_account_and_drops_password(self, login, profile):
+        res = self.client.post(
+            "/api/accounts/garmin/bind-password/",
+            {"username": "a@b.c", "password": "secret-pw"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201, res.data)
+
+        account = PlatformAccount.objects.get(user=self.user, platform=self.platform)
+        self.assertEqual(account.platform_user_id, "42")
+        self.assertEqual(account.display_name, "小鱼")
+        self.assertEqual(account.get_access_token(), "at")
+        self.assertEqual(account.get_session()["oauth1"]["oauth_token"], "ot")
+
+        # 密码只在请求里出现这一次：不入库、不进会话字段
+        self.assertNotIn("secret-pw", account.session_data)
+        self.assertNotIn("password", account.get_session())
+
+    @patch("apps.platforms.views.garmin_sso.profile", return_value={"profileId": 42})
+    @patch("apps.platforms.views.garmin_sso.login")
+    def test_mfa_is_a_two_step_bind(self, login, profile):
+        login.side_effect = garmin_sso.MfaRequired(
+            {"domain": "garmin.com", "login_params": {}, "cookies": {"SESSION": "x"}}, "email"
+        )
+        res = self.client.post(
+            "/api/accounts/garmin/bind-password/",
+            {"username": "a@b.c", "password": "pw"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 202, res.data)
+        self.assertTrue(res.data["needs_mfa"])
+        pending_id = res.data["pending_id"]
+        self.assertTrue(PendingLogin.objects.filter(id=pending_id).exists())
+
+        with patch(
+            "apps.platforms.views.garmin_sso.verify_mfa", return_value=self.TOKENS
+        ) as verify:
+            res = self.client.post(
+                "/api/accounts/garmin/bind-password/mfa/",
+                {"pending_id": pending_id, "code": "123456"},
+                format="json",
+            )
+        self.assertEqual(res.status_code, 201, res.data)
+        verify.assert_called_once()
+        self.assertFalse(PendingLogin.objects.filter(id=pending_id).exists(), "用完必须删掉")
+        self.assertTrue(
+            PlatformAccount.objects.filter(user=self.user, platform=self.platform).exists()
+        )
+
+    @patch("apps.platforms.views.garmin_sso.login")
+    def test_wrong_code_keeps_pending_for_retry(self, login):
+        login.side_effect = garmin_sso.MfaRequired(
+            {"domain": "garmin.com", "login_params": {}, "cookies": {}}, "email"
+        )
+        res = self.client.post(
+            "/api/accounts/garmin/bind-password/", {"username": "a@b.c", "password": "pw"}, format="json"
+        )
+        pending_id = res.data["pending_id"]
+
+        with patch(
+            "apps.platforms.views.garmin_sso.verify_mfa",
+            side_effect=garmin_sso.GarminError("mfa", "验证码不正确或已过期，请重新获取后再试"),
+        ):
+            res = self.client.post(
+                "/api/accounts/garmin/bind-password/mfa/",
+                {"pending_id": pending_id, "code": "000000"},
+                format="json",
+            )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("验证码", res.data["detail"])
+        self.assertTrue(
+            PendingLogin.objects.filter(id=pending_id).exists(),
+            "输错一位验证码就要求重填密码，体验上完全说不通",
+        )
+
+    @patch("apps.platforms.views.garmin_sso.login")
+    def test_platform_failure_is_logged_and_reported(self, login):
+        from apps.synclogs.models import SyncLog
+
+        login.side_effect = garmin_sso.GarminError("login", "登录未通过，请确认账号和密码是否正确")
+        res = self.client.post(
+            "/api/accounts/garmin/bind-password/",
+            {"username": "a@b.c", "password": "pw"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 502)
+        self.assertIn("账号和密码", res.data["detail"])
+        self.assertTrue(SyncLog.objects.filter(level="error").exists())
+
+    def test_oauth_platform_rejects_password_bind(self):
+        make_platform("strava", auth_type="oauth2")
+        res = self.client.post(
+            "/api/accounts/strava/bind-password/",
+            {"username": "a", "password": "b"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("授权", res.data["detail"])
+
+    @patch("apps.platforms.views.garmin_sso.login")
+    def test_authorize_view_points_password_platform_to_the_form(self, login):
+        res = self.client.get("/api/accounts/garmin/authorize/?client=wx")
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.data["code"], "use_password_bind")
+
+    def test_password_platform_needs_no_oauth_credentials(self):
+        """密码渠道不该因为「缺少 client_id」被判成未就绪 —— 那会把它推回演示身份。"""
+        self.assertTrue(self.platform.oauth_ready)
+        self.assertEqual(self.platform.mobile_bind_channel, "password")

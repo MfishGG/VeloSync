@@ -183,9 +183,11 @@ class Command(BaseCommand):
         # 必然拒绝（Strava 直接回 {"field":"redirect_uri","code":"invalid"}）。
         # 只有在真的有平台配了凭证时才提示 —— 纯演示环境不必纠结这一项。
         redirect_base = getattr(settings, "PLATFORM_REDIRECT_BASE_URL", "").rstrip("/")
+        # 只数走 OAuth 的平台：账号密码渠道（Garmin）没有回调地址，把它算进来
+        # 会让「只有佳明」的部署收到一条永远无法消除的 FAIL。
         try:
             oauth_count = (
-                Platform.objects.filter(is_active=True).exclude(auth_type="mock").count()
+                Platform.objects.filter(is_active=True, auth_type="oauth2").count()
             )
         except Exception:  # 数据库还没就绪时不让自检自己挂掉
             oauth_count = 0

@@ -288,3 +288,115 @@ class FitUploadSourceTests(BaseFixtures):
 
         self.assertFalse(_Adapter.called, "没有原始文件时不该向真实平台上传任何东西")
         self.assertEqual(engine.stats["failed"], 1)
+
+
+class FileForUploadTests(BaseFixtures):
+    """没有原始文件的来源（Strava）怎么把数据交到目标平台。
+
+    Strava 的 api/v3 不提供活动文件下载，而佳明只接收文件。中间这一环必须由
+    我们合成 TCX —— 此前引擎是向**目标平台**要文件（`adapter.download_fit`），
+    语义上就是错的，Strava 来源下必然失败。
+    """
+
+    def _detail(self, activity):
+        from apps.activities.models import ActivityFitDetail
+
+        return ActivityFitDetail.objects.create(
+            activity=activity,
+            file_name="Strava · 1",
+            file_size=0,
+            file_hash="",
+            summary={"duration": 600, "distance_km": 5.0},
+            samples=[
+                {"t": 0, "distance_km": 0, "lat": 31.20, "lng": 121.40, "speed_kmh": 18.0},
+                {"t": 300, "distance_km": 2.5, "lat": 31.25, "lng": 121.45, "speed_kmh": 20.0},
+                {"t": 600, "distance_km": 5.0, "lat": 31.30, "lng": 121.50, "speed_kmh": 22.0},
+            ],
+            track=[[121.40, 31.20], [121.45, 31.25], [121.50, 31.30]],
+        )
+
+    def _target(self, code="garmin-file"):
+        platform = make_platform(
+            code,
+            name="佳明",
+            auth_type="password",
+            capabilities={"upload": True},
+            api_base="https://connect.garmin.com",
+        )
+        account = PlatformAccount.objects.create(
+            user=self.user, platform=platform, platform_user_id="42"
+        )
+        return platform, account
+
+    def test_tcx_is_synthesized_when_source_has_no_file(self):
+        platform, account = self._target()
+        pipeline = self.make_pipeline(source_type="strava", sync_content=["activity"])
+        engine = PipelineEngine(pipeline, PipelineRun.objects.create(pipeline=pipeline))
+        activity = self.make_activity(source_platform="strava")
+        self._detail(activity)
+
+        sent = {}
+
+        class _Adapter:
+            def check_exists(self, ts):
+                return None
+
+            def upload_fit(self, data, name=""):
+                sent["data"] = data
+                return "777"
+
+        engine._sync_activity(activity, account, platform, _Adapter(), False)
+
+        self.assertEqual(engine.stats["uploaded"], 1)
+        self.assertTrue(sent["data"].startswith(b"<?xml"), "必须是一份真的 TCX")
+        self.assertIn(b"<TrainingCenterDatabase", sent["data"])
+        self.assertIn(b"<Trackpoint>", sent["data"])
+
+    def test_existing_activity_counts_as_skipped_not_failed(self):
+        from apps.platforms.adapters import ActivityExists
+
+        platform, account = self._target("garmin-dup")
+        pipeline = self.make_pipeline(source_type="strava", sync_content=["activity"])
+        engine = PipelineEngine(pipeline, PipelineRun.objects.create(pipeline=pipeline))
+        activity = self.make_activity(source_platform="strava")
+        self._detail(activity)
+        # 真实流程里源节点会先把矩阵单元格建好（_init_sync_states），
+        # 这里补上，否则没有行可标记
+        ActivitySyncState.objects.create(
+            activity=activity, platform=platform, status="pending"
+        )
+
+        class _Adapter:
+            def check_exists(self, ts):
+                return None
+
+            def upload_fit(self, data, name=""):
+                raise ActivityExists("佳明上已经有这场活动的记录")
+
+        engine._sync_activity(activity, account, platform, _Adapter(), False)
+
+        state = ActivitySyncState.objects.get(activity=activity, platform=platform)
+        self.assertEqual(state.status, "synced")
+        self.assertEqual(engine.stats["failed"], 0)
+        self.assertEqual(engine.stats["skipped"], 1)
+
+    def test_raw_fit_still_wins_over_synthesis(self):
+        platform, account = self._target("garmin-raw")
+        pipeline = self.make_pipeline(source_type="strava", sync_content=["activity"])
+        engine = PipelineEngine(pipeline, PipelineRun.objects.create(pipeline=pipeline))
+        activity = self.make_activity(source_platform="strava")
+        self._detail(activity)
+        ActivityFitFile.objects.create(activity=activity, data=b"REAL-FIT", size=8)
+
+        sent = {}
+
+        class _Adapter:
+            def check_exists(self, ts):
+                return None
+
+            def upload_fit(self, data, name=""):
+                sent["data"] = data
+                return "1"
+
+        engine._sync_activity(activity, account, platform, _Adapter(), False)
+        self.assertEqual(sent["data"], b"REAL-FIT", "有原始文件时不该退化成合成")

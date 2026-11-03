@@ -109,12 +109,15 @@ class Command(BaseCommand):
         for p in Platform.objects.all().order_by("id"):
             if p.auth_type == "mock":
                 state = "演示平台（无需凭证）"
+            elif p.auth_type == "password":
+                # Garmin 这类没有面向个人的 OAuth，凭证由用户自己的账号密码换取
+                state = "账号密码登录（无需凭证）"
             elif p.oauth_ready:
                 state = f"已配置（client_id={p.client_id[:12]}…）" if p.client_id else "已配置"
             else:
                 state = "未配置：" + "、".join(p.oauth_missing)
             self.stdout.write(f"[{p.code}] {p.name} · {state}" + (" · PKCE" if p.requires_pkce else ""))
-            if p.code in DOCS and not p.oauth_ready:
+            if p.code in DOCS and not p.oauth_ready and p.auth_type != "password":
                 self.stdout.write(f"    申请入口：{DOCS[p.code]}")
         self.stdout.write("")
         self.stdout.write(

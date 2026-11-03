@@ -123,6 +123,35 @@ def _init_sync_states(activity: Activity, source_platform) -> None:
         )
 
 
+def detail_exists(activity) -> bool:
+    return ActivityFitDetail.objects.filter(activity=activity).exists()
+
+
+def import_detail(account, item: dict, activity) -> None:
+    """拉一条活动的 streams 并写成解析详情。
+
+    与 `pull_from_account` 分开是因为同步任务引擎也要用它 —— 引擎从平台来源
+    拉活动时早先只建了活动行、不拉曲线，于是「Strava → 佳明」在合成 TCX 那一
+    步必然没有采样点可用，报的却是「没有原始文件」，完全指不回真正原因。
+    """
+    adapter = get_adapter(account)
+    streams = adapter.fetch_activity_streams(item["remote_id"])
+    payload = streams_to_detail(streams, item)
+    ActivityFitDetail.objects.update_or_create(
+        activity=activity,
+        defaults={
+            # 没有文件可指，就用平台侧标识占位：列表页要显示「数据来自哪里」
+            "file_name": f"{account.platform.name} · {item['remote_id']}"[:255],
+            "file_size": 0,
+            "file_hash": "",
+            "device": payload["device"],
+            "summary": payload["summary"],
+            "samples": payload["samples"],
+            "track": payload["track"],
+        },
+    )
+
+
 def pull_from_account(
     account,
     *,
@@ -165,26 +194,12 @@ def pull_from_account(
         if index >= detail_limit:
             stats["detail_skipped"] += 1
             continue
-        if ActivityFitDetail.objects.filter(activity=activity).exists():
+        if detail_exists(activity):
             stats["detail_skipped"] += 1
             continue
 
         try:
-            streams = adapter.fetch_activity_streams(item["remote_id"])
-            payload = streams_to_detail(streams, item)
-            ActivityFitDetail.objects.update_or_create(
-                activity=activity,
-                defaults={
-                    # 没有文件可指，就用平台侧标识占位：列表页要显示「数据来自哪里」
-                    "file_name": f"{account.platform.name} · {item['remote_id']}"[:255],
-                    "file_size": 0,
-                    "file_hash": "",
-                    "device": payload["device"],
-                    "summary": payload["summary"],
-                    "samples": payload["samples"],
-                    "track": payload["track"],
-                },
-            )
+            import_detail(account, item, activity)
             stats["detail_imported"] += 1
         except AdapterError as exc:
             # 单条失败不中断整批：限流是 429、个别活动可能被设为私密

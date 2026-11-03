@@ -18,6 +18,7 @@ from datetime import timezone as dt_timezone
 import requests
 from django.utils import timezone
 
+from . import garmin_sso
 from .models import PlatformAccount
 from .tokens import ensure_fresh_token
 
@@ -69,6 +70,30 @@ class AdapterError(Exception):
     """平台适配器执行异常。"""
 
 
+class ActivityExists(AdapterError):
+    """目标平台上已经有这场活动。
+
+    不算失败：同步的目的达到了。但也不能当成「刚上传成功」记 remote id ——
+    那个 id 是对方的，我们没有。引擎据此记为「已同步（对方已有）」。
+    """
+
+
+def guess_file_kind(data: bytes) -> str:
+    """按内容判断这是 FIT 还是 TCX。
+
+    为什么不让调用方传：同一条链路里文件来源有三种（本地原始 FIT、平台下载、
+    现场合成的 TCX），要是每个调用点都手写类型，总有一处会传错 —— 而传错的
+    表现是佳明回一句「文件格式不支持」，完全指不回是哪一步。
+    判定方法可靠：TCX 就是 XML，开头必然是 `<?xml` 或根元素；FIT 是二进制。
+    """
+    head = (data or b"")[:2048].lstrip()
+    if head.startswith(b"<?xml") or head.startswith(b"<TrainingCenterDatabase"):
+        return "tcx"
+    if b"<TrainingCenterDatabase" in head:
+        return "tcx"
+    return "fit"
+
+
 def _json_or_none(resp):
     """平台异常时常常返回 HTML 错误页而不是 JSON，别让 .json() 把真实错误盖掉。"""
     try:
@@ -93,6 +118,12 @@ class ContentNotSupported(NotImplementedError):
 
 class BaseAdapter(ABC):
     code = "base"
+
+    #: 该平台能否**导出**活动原始文件。
+    #:
+    #: 影响同步链路怎么拿到要上传的字节：能导出的直接下载原始文件（无损），
+    #: 不能导出的（Strava 的 api/v3 没有导出端点）只能拿本地采样点现场合成 TCX。
+    CAN_EXPORT_FILES = True
 
     #: 该平台支持的账号类内容（运动记录之外的 profile / course / route / weight / sleep …）
     CONTENT_SUPPORT: set[str] = set()
@@ -278,11 +309,186 @@ class IGPSPORTAdapter(OAuthAdapter):
 
 
 class GarminAdapter(OAuthAdapter):
+    """佳明适配器（账号密码渠道 + 文件上传）。
+
+    与其它平台最大的不同：它没有可申请的 OAuth 应用，凭据来自用户自己的
+    账号密码登录（见 `garmin_sso`）。所以这里的 token 不是「OAuth 授权码换来的」，
+    而是「登录后换来的」，刷新也走 OAuth1 而不是 refresh_token。
+
+    `api_base` 里的域名决定打向哪个区（connect.garmin.com / connect.garmin.cn）：
+    两套账号体系互不相通，指错域名只会得到「账号不存在」。
+    """
+
     code = "garmin"
+
+    #: 上传入口。文件名后缀决定佳明按哪种格式解析，所以扩展名必须对。
+    UPLOAD_PATH = "/upload-service/upload"
+
+    def _domain(self) -> str:
+        return garmin_sso.platform_domain(self.account.platform)
+
+    def _api(self, path: str) -> str:
+        return f"https://connectapi.{self._domain()}{path}"
+
+    # ---------- 令牌 ----------
+
+    def _ensure_token(self, force: bool = False) -> str:
+        """取可用的 OAuth2 Bearer，必要时用 OAuth1 换一份新的。
+
+        OAuth2 只有 1 小时。不主动刷新的话，用户每天第一次同步必然 401 ——
+        而 401 会被上层解释成「授权失效、请重新绑定」，于是他被要求重填一次密码，
+        而实际上什么都不用做。
+        """
+        token = self.account.get_access_token()
+        if token and not force and not self.account.is_expiring:
+            return token
+
+        oauth1 = self.account.get_session().get("oauth1") or {}
+        if not oauth1.get("oauth_token"):
+            raise AdapterError(
+                "这个佳明账号缺少登录凭据（多为改动前绑定的），"
+                "请在「账号」页用账号密码重新绑定"
+            )
+        try:
+            oauth2 = garmin_sso.refresh(oauth1, self._domain())
+        except garmin_sso.GarminError as exc:
+            self.account.mark_expired(str(exc))
+            raise AdapterError(f"{exc}；请在「账号」页重新绑定") from exc
+
+        self._store_oauth2(oauth2)
+        return oauth2["access_token"]
+
+    def _store_oauth2(self, oauth2: dict) -> None:
+        self.account.set_tokens(
+            oauth2["access_token"],
+            oauth2.get("refresh_token") or "",
+            expires_in=oauth2.get("expires_in"),
+        )
+        self.account.save(
+            update_fields=["access_token", "refresh_token", "token_expires_at", "status"]
+        )
+
+    # ---------- 读 ----------
+
+    def fetch_activities(self, since=None) -> list[dict]:
+        raise AdapterError(
+            "佳明作为数据来源尚未接入（当前支持「上传到佳明」；"
+            "从佳明取记录请等后续版本）"
+        )
+
+    def download_fit(self, activity_id) -> bytes:
+        raise AdapterError("佳明暂不支持导出活动文件（本次只实现了上传）")
+
+    # ---------- 写 ----------
+
+    def upload_fit(self, fit_data: bytes, name: str = "") -> str:
+        """上传 FIT 或 TCX，返回佳明侧的活动 ID。
+
+        两种格式都收（`/upload-service/upload` 按文件名后缀识别），所以
+        「Strava 拿不到原始文件 → 现场合成 TCX」这条路才能走通。
+        """
+        if not fit_data:
+            raise AdapterError("要上传的文件是空的")
+
+        kind = guess_file_kind(fit_data)
+        filename = _filename_for(name, kind)
+        token = self._ensure_token()
+        resp = self._post_file(token, filename, fit_data, kind)
+
+        # 401 只说明这一小时的表到期了，用 OAuth1 换一份再试一次；
+        # 直接报「授权失效」会让用户白重填一次密码。
+        if resp.status_code in (401, 403):
+            logger.info("佳明上传返回 %s，刷新令牌后重试", resp.status_code)
+            token = self._ensure_token(force=True)
+            resp = self._post_file(token, filename, fit_data, kind)
+
+        return self._read_upload_result(resp)
+
+    def _post_file(self, token: str, filename: str, data: bytes, kind: str):
+        mime = {
+            "tcx": "application/vnd.garmin.tcx+xml",
+            "fit": "application/octet-stream",
+        }.get(kind, "application/octet-stream")
+        try:
+            return requests.post(
+                self._api(self.UPLOAD_PATH),
+                headers={"Authorization": f"Bearer {token}"},
+                files={"file": (filename, data, mime)},
+                timeout=(10, 120),
+            )
+        except requests.RequestException as exc:
+            raise AdapterError(f"上传到佳明失败（网络错误：{type(exc).__name__}）") from exc
+
+    def _read_upload_result(self, resp) -> str:
+        body = _json_or_none(resp)
+        if resp.status_code == 429:
+            raise AdapterError("佳明上传接口限流了（429），请等一会儿再试")
+
+        reason = _short_reason(body, resp)
+        if resp.status_code == 409 or "duplicate" in reason.lower():
+            raise ActivityExists("佳明上已经有这场活动的记录，无需重复上传")
+
+        if resp.status_code >= 400:
+            raise AdapterError(f"上传到佳明失败（HTTP {resp.status_code}）：{reason}")
+
+        result = (body or {}).get("detailedImportResult") if isinstance(body, dict) else None
+        if not isinstance(result, dict):
+            raise AdapterError(
+                "佳明没有返回上传结果。文件可能已进入处理队列，"
+                "请稍后到佳明上看一眼，避免重复上传"
+            )
+
+        successes = result.get("successes") or []
+        for item in successes:
+            item = item or {}
+            remote = item.get("internalId") or item.get("externalId")
+            if remote:
+                return str(remote)
+        if successes:
+            return ""
+
+        message = _first_failure_message(result)
+        if "duplicate" in message.lower():
+            raise ActivityExists("佳明上已经有这场活动的记录，无需重复上传")
+        raise AdapterError(f"佳明不接受这个文件：{message or '未给出原因'}")
+
+    # ---------- 其它 ----------
+
+    def check_exists(self, start_timestamp):
+        """佳明没有「按时间点查是否已上传」的接口，去重交给文件里的时间戳。"""
+        return None
+
+    def revoke_token(self) -> bool:
+        """佳明没有 deauthorize 端点。
+
+        本地解绑会连同 `session_data` 一起删掉，服务端就再也拿不到这个账号 ——
+        这与「撤销授权」的效果一致。
+        """
+        return False
+
+
+def _filename_for(name: str, kind: str) -> str:
+    """文件名要干净：引号/换行会破坏 multipart 的分隔与部分平台的解析。"""
+    cleaned = "".join(ch for ch in (name or "") if ch not in '\r\n"\\/' and ch.isprintable())
+    cleaned = cleaned.strip()[:80] or "velosync-activity"
+    return f"{cleaned}.{kind}"
+
+
+def _first_failure_message(result: dict) -> str:
+    for failure in result.get("failures") or []:
+        for message in (failure or {}).get("messages") or []:
+            content = str((message or {}).get("content") or "").strip()
+            if content:
+                return content
+    return ""
 
 
 class StravaAdapter(OAuthAdapter):
     code = "strava"
+
+    #: api/v3 **没有**活动文件导出端点（`export_original` / `export_tcx` 只在网页版
+    #: 存在）。所以从 Strava 取数据只能走 streams，要文件得我们现场合成。
+    CAN_EXPORT_FILES = False
 
     #: Strava 明确要求撤销授权时调用该端点，否则平台侧授权仍然有效
     DEAUTHORIZE_URL = "https://www.strava.com/oauth/deauthorize"
@@ -430,10 +636,13 @@ class StravaAdapter(OAuthAdapter):
         base = (self.account.platform.api_base or "").rstrip("/")
 
         filename = (name or "").strip()[:120] or "velosync-activity"
-        if not filename.lower().endswith(".fit"):
-            filename += ".fit"
+        # 后缀与 data_type 必须一致，而且要与**文件内容**一致：
+        # 合成的 TCX 若被当成 fit 上传，Strava 只会回一句解析失败
+        kind = guess_file_kind(fit_data)
+        if not filename.lower().endswith(f".{kind}"):
+            filename += f".{kind}"
 
-        data = {"data_type": "fit"}
+        data = {"data_type": kind}
         if name:
             data["name"] = name[:150]
 

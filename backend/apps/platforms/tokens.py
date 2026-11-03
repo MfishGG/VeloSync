@@ -126,8 +126,12 @@ def ensure_fresh_token(account: PlatformAccount) -> PlatformAccount:
 
     演示账号（`mock-` / `demo-`）不参与刷新 —— 它们的 Token 是我们自己签发的，
     没有对应的刷新端点，硬刷只会报错。
+
+    账号密码渠道（Garmin）同样跳过：它没有 `token_url`，刷新要走「用 OAuth1 换
+    OAuth2」（`garmin_sso.refresh`，由 GarminAdapter 自己处理）。放它进来只会
+    被 `refresh_access_token` 判成「刷新失败」并顺手把好账号标成 expired。
     """
-    if account.is_demo or account.platform.auth_type == "mock":
+    if account.is_demo or account.platform.auth_type in ("mock", "password"):
         return account
     if not account.is_expiring:
         return account

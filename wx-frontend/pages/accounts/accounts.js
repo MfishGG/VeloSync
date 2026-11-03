@@ -5,12 +5,16 @@ const config = require("../../config");
 
 /**
  * 移动端绑定渠道：
- *   ① 已登记官方小程序 AppID  → wx.navigateToMiniProgram 跳官方小程序授权
- *   ② OAuth 凭证齐全         → 复制授权页链接（https），在系统浏览器完成授权
- *   ③ 以上都缺               → 以「演示身份」绑定，本地也能跑通全链路
+ *   ① 账号密码（Garmin）       → 在本页填账号密码，后端登录一次换取令牌
+ *   ② OAuth 凭证齐全           → 复制授权页链接（https），在系统浏览器完成授权
+ *   ③ 已登记官方小程序 AppID    → wx.navigateToMiniProgram 跳官方小程序授权
+ *   ④ 以上都缺                 → 以「演示身份」绑定，本地也能跑通全链路
  *
- * 第二档曾经是「复制 App 的 URL Scheme」，那条路走不通：iOS Safari 地址栏不接受
- * 自定义 scheme，用户拿到的是打不开的链接。详见 bindViaBrowser 的注释。
+ * ①之所以存在：佳明的开放平台只对企业合作方开放，个人应用申请不下来，
+ * 而它自己的登录是可用的。密码只在登录那一次用，不保存。
+ *
+ * ③曾经排在 ② 前面，那是个 bug：跳官方小程序只是把用户送走，没有回调、
+ * 拿不到 token，一行都不会落库。
  */
 Page({
   data: {
@@ -21,6 +25,8 @@ Page({
     accounts: [],
     boundIds: {},
     busy: "",
+    /** 账号密码绑定表单：null 表示未展开 */
+    bindSheet: null,
   },
 
   onShow() {
@@ -63,11 +69,13 @@ Page({
             channelLabel:
               p.auth_type === "mock"
                 ? "演示平台"
-                : p.mobile_bind_channel === "miniprogram"
-                  ? "官方小程序授权"
-                  : p.mobile_bind_channel === "oauth"
-                    ? "浏览器授权"
-                    : "暂未开放",
+                : p.mobile_bind_channel === "password"
+                  ? "账号密码"
+                  : p.mobile_bind_channel === "miniprogram"
+                    ? "官方小程序授权"
+                    : p.mobile_bind_channel === "oauth"
+                      ? "浏览器授权"
+                      : "暂未开放",
             /**
              * 面向用户的「绑定方式」：说清点下去会发生什么。
              * 刻意不提「微信不允许唤起第三方 App / 三级兜底」——那是给后台配置者
@@ -77,11 +85,13 @@ Page({
             bindHint:
               p.auth_type === "mock"
                 ? "演示平台，点击后直接绑定，无需授权"
-                : p.mobile_bind_channel === "miniprogram"
-                  ? `点击「绑定账号」将跳转到 ${p.name} 官方小程序完成授权`
-                  : p.mobile_bind_channel === "oauth"
-                    ? `点击「绑定账号」将复制授权链接，在浏览器中登录 ${p.name} 完成授权`
-                    : `${p.name} 暂未提供官方授权入口，将以演示身份绑定`,
+                : p.mobile_bind_channel === "password"
+                  ? "点击「绑定账号」填入账号与密码，密码仅用于登录、不会保存"
+                  : p.mobile_bind_channel === "miniprogram"
+                    ? `点击「绑定账号」将跳转到 ${p.name} 官方小程序完成授权`
+                    : p.mobile_bind_channel === "oauth"
+                      ? `点击「绑定账号」将复制授权链接，在浏览器中登录 ${p.name} 完成授权`
+                      : `${p.name} 暂未提供官方授权入口，将以演示身份绑定`,
             upload: !!(p.capabilities && p.capabilities.upload),
             boundCount: bound[p.id] || 0,
           })),
@@ -119,6 +129,12 @@ Page({
 
     if (p.auth_type === "mock") {
       this.demoBind(p, "演示平台已直接绑定");
+      return;
+    }
+
+    // 账号密码渠道没有「选哪条路」的余地：只有这一条，直接给表单
+    if (p.channel === "password") {
+      this.openBindSheet(p);
       return;
     }
 
@@ -275,7 +291,11 @@ Page({
    */
   showHelp(p) {
     let how;
-    if (p.oauth_ready) {
+    if (p.channel === "password") {
+      how =
+        `点「绑定账号」后填入你的 ${p.name} 账号与密码，登录成功后即可同步。` +
+        "密码只用于登录一次换取同步凭据，不会被保存；随时可以在本页解绑。";
+    } else if (p.oauth_ready) {
       how =
         "点「绑定账号」后会把授权链接复制到剪贴板：打开手机浏览器粘贴访问，" +
         `登录 ${p.name} 并同意授权，看到「绑定成功」后回到本页下拉刷新。`;
@@ -299,6 +319,129 @@ Page({
       showCancel: false,
       confirmText: "知道了",
     });
+  },
+
+  // ---------------- 账号密码绑定（佳明） ----------------
+
+  /**
+   * 展开绑定表单。
+   *
+   * 为什么不用 wx.showModal：它的 `editable` 只能收一个输入框，而这里要
+   * 账号 + 密码两个，还得在第二步换成验证码 —— 只能自己画。
+   */
+  openBindSheet(p) {
+    // 佳明两区是两套独立账号，选错区的表现是「登录成功但不是我的数据」——
+    // 这种事用户自己想不出来，所以标题下面第一句就点明
+    const region =
+      p.code === "garmin_cn"
+        ? "这是中国区账号（connect.garmin.cn），"
+        : p.code === "garmin"
+          ? "这是国际区账号（connect.garmin.com），"
+          : "";
+    this.setData({
+      bindSheet: {
+        code: p.code,
+        name: p.name,
+        step: "password",
+        username: "",
+        password: "",
+        verifyCode: "",
+        pendingId: "",
+        busy: false,
+        error: "",
+        hint: `${region}密码仅用于登录一次换取同步凭据，不会被保存。`,
+      },
+    });
+  },
+
+  closeBindSheet() {
+    if (this.data.bindSheet && this.data.bindSheet.busy) return;
+    this.setData({ bindSheet: null });
+  },
+
+  onBindInput(e) {
+    const field = e.currentTarget.dataset.field;
+    if (!field || !this.data.bindSheet) return;
+    this.setData({ [`bindSheet.${field}`]: e.detail.value });
+  },
+
+  submitPassword() {
+    const sheet = this.data.bindSheet;
+    if (!sheet || sheet.busy) return;
+    const username = (sheet.username || "").trim();
+    const password = sheet.password || "";
+    if (!username || !password) {
+      this.setData({ "bindSheet.error": "请填写账号与密码" });
+      return;
+    }
+
+    this.setData({ "bindSheet.busy": true, "bindSheet.error": "" });
+    api.platforms
+      .bindPassword(sheet.code, { username, password })
+      .then((res) => {
+        if (res && res.needs_mfa) {
+          // 两步验证：立刻把密码从页面数据里清掉，界面切到验证码
+          this.setData({
+            "bindSheet.step": "mfa",
+            "bindSheet.pendingId": res.pending_id,
+            "bindSheet.password": "",
+            "bindSheet.username": username,
+            "bindSheet.busy": false,
+            "bindSheet.error": "",
+            "bindSheet.verifyCode": "",
+            "bindSheet.hint":
+              "这个账号开启了两步验证。请输入佳明发到你手机或邮箱的验证码。",
+          });
+          return;
+        }
+        this.setData({ bindSheet: null });
+        wx.showToast({ title: "绑定成功", icon: "success" });
+        this.load();
+      })
+      .catch((err) => {
+        if (!this.data.bindSheet) return;
+        this.setData({
+          "bindSheet.busy": false,
+          "bindSheet.error": (err && err.message) || "绑定失败，请稍后重试",
+        });
+      });
+  },
+
+  submitMfa() {
+    const sheet = this.data.bindSheet;
+    if (!sheet || sheet.busy) return;
+    const verifyCode = (sheet.verifyCode || "").trim();
+    if (!verifyCode) {
+      this.setData({ "bindSheet.error": "请填写验证码" });
+      return;
+    }
+
+    this.setData({ "bindSheet.busy": true, "bindSheet.error": "" });
+    api.platforms
+      .bindPasswordMfa(sheet.code, sheet.pendingId, verifyCode)
+      .then(() => {
+        this.setData({ bindSheet: null });
+        wx.showToast({ title: "绑定成功", icon: "success" });
+        this.load();
+      })
+      .catch((err) => {
+        if (!this.data.bindSheet) return;
+        const message = (err && err.message) || "验证失败，请重试";
+        // 待验证状态只活 10 分钟：过期后必须重新输密码，留在这一步只会一直失败
+        const expired = err && err.status === 400 && /失效|过期/.test(message);
+        if (expired) {
+          this.setData({
+            "bindSheet.step": "password",
+            "bindSheet.password": "",
+            "bindSheet.pendingId": "",
+            "bindSheet.verifyCode": "",
+            "bindSheet.busy": false,
+            "bindSheet.error": `${message}。请重新输入一次账号密码`,
+          });
+          return;
+        }
+        this.setData({ "bindSheet.busy": false, "bindSheet.error": message });
+      });
   },
 
   onUnbind(e) {

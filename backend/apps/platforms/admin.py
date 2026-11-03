@@ -51,6 +51,8 @@ class PlatformAdmin(admin.ModelAdmin):
     def credential_state(self, obj: Platform) -> str:
         if obj.auth_type == "mock":
             return "演示（无需凭证）"
+        if obj.auth_type == "password":
+            return "账号密码（无需凭证）"
         return "已配置" if obj.oauth_ready else "未配置：" + "、".join(obj.oauth_missing)
 
 
@@ -59,3 +61,5 @@ class PlatformAccountAdmin(admin.ModelAdmin):
     list_display = ("user", "platform", "platform_user_id", "display_name", "status", "token_expires_at")
     list_filter = ("status", "platform")
     search_fields = ("user__username", "platform_user_id")
+    #: 这两列是密文，在后台表单里既读不懂也改不对；误填一段乱码等于把账号弄坏
+    exclude = ("session_data",)

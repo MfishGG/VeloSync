@@ -19,8 +19,9 @@ from rest_framework.views import APIView
 
 from apps.synclogs.models import SyncLog
 
+from . import garmin_sso
 from .adapters import get_adapter
-from .models import OAuthState, Platform, PlatformAccount
+from .models import OAuthState, PendingLogin, Platform, PlatformAccount
 from .serializers import PlatformAccountSerializer, PlatformSerializer
 from .tokens import TokenError, post_json, resolve_expiry
 
@@ -28,6 +29,16 @@ logger = logging.getLogger(__name__)
 
 #: OAuth state 的有效期（秒）：签名有效期，与库里那条一次性记录的存活上限一致。
 STATE_MAX_AGE = 600
+
+#: 账号密码登录「等待验证码」的有效期。验证码本身通常 5~10 分钟过期，
+#: 这里取同一量级：再长也没有意义，验证码早就不能用了。
+PENDING_LOGIN_MAX_AGE = 600
+
+
+def _purge_expired_pending() -> None:
+    """清掉过期的待验证登录。与 OAuthState 同样的理由：不依赖定时任务。"""
+    deadline = timezone.now() - timedelta(seconds=PENDING_LOGIN_MAX_AGE)
+    PendingLogin.objects.filter(created_at__lt=deadline).delete()
 
 
 def _purge_expired_states() -> None:
@@ -265,6 +276,17 @@ class AuthorizeView(APIView):
         if platform is None:
             return Response({"detail": f"平台 {code} 不存在"}, status=400)
 
+        # 账号密码渠道：没有授权页可跳，直接指回表单
+        if platform.auth_type == "password":
+            return Response(
+                {
+                    "code": "use_password_bind",
+                    "detail": f"{platform.name} 用平台账号密码绑定，不需要浏览器授权",
+                    "platform": platform.code,
+                },
+                status=400,
+            )
+
         # 演示平台：直接创建账号，无需跳转
         if platform.auth_type == "mock":
             account, _ = PlatformAccount.objects.get_or_create(
@@ -374,6 +396,179 @@ class DemoBindView(APIView):
             },
             status=201 if created else 200,
         )
+
+
+def _password_platform(code: str):
+    """取出可用于账号密码绑定的平台，返回 (platform, 错误响应)。"""
+    platform = Platform.objects.filter(code=code, is_active=True).first()
+    if platform is None:
+        return None, Response({"detail": f"平台 {code} 不存在"}, status=400)
+    if platform.auth_type != "password":
+        return None, Response(
+            {"detail": f"{platform.name} 不支持账号密码绑定，请用授权流程"}, status=400
+        )
+    if platform.code not in garmin_sso.DOMAINS:
+        return None, Response(
+            {"detail": f"{platform.name} 的账号密码登录尚未接入"}, status=400
+        )
+    return platform, None
+
+
+def _finish_password_bind(user, platform, login_name: str, oauth1: dict, oauth2: dict, domain: str):
+    """把一次成功登录落成账号记录。
+
+    `platform_user_id` 尽量用平台给的 ID：它是唯一约束的一部分，用登录名的话，
+    用户改一次邮箱就会多出一条「新账号」，而旧的那条还挂着同一个佳明账号。
+    """
+    profile = garmin_sso.profile(oauth2.get("access_token", ""), domain)
+    platform_user_id = str(
+        profile.get("profileId") or profile.get("userName") or login_name
+    )[:128]
+    display_name = str(
+        profile.get("displayName") or profile.get("fullName") or login_name
+    )[:128]
+
+    account, created = PlatformAccount.objects.update_or_create(
+        user=user,
+        platform=platform,
+        platform_user_id=platform_user_id,
+        defaults={"status": "active", "display_name": display_name},
+    )
+    account.set_tokens(
+        oauth2.get("access_token", ""),
+        oauth2.get("refresh_token") or "",
+        expires_in=oauth2.get("expires_in"),
+    )
+    # OAuth1 必须留下：OAuth2 一小时后失效，刷新要拿它去签（见 garmin_sso.refresh）
+    account.set_session({"oauth1": oauth1})
+    account.save()
+    SyncLog.objects.create(
+        user=user,
+        level="success",
+        message=f"{'绑定' if created else '重新绑定'} {platform.name} 账号成功（账号密码登录）",
+    )
+    return account, created
+
+
+def _bind_ok(account, created: bool, platform) -> Response:
+    return Response(
+        {
+            "account_id": account.id,
+            "created": created,
+            "platform": platform.code,
+            "display_name": account.display_name,
+        },
+        status=201 if created else 200,
+    )
+
+
+class PasswordBindView(APIView):
+    """POST /api/accounts/{code}/bind-password/ —— 用平台账号密码绑定
+
+    适用于没有面向个人开发者开放 OAuth 的平台（Garmin）。密码只在这一次
+    请求里用到，换到令牌就丢弃 —— 不落库、不写日志。
+
+    需要二次验证时返回 202 + `needs_mfa`：验证码必须在**同一个登录会话**里提交，
+    所以中间态存进 `PendingLogin`（不是内存字典，多进程下会丢）。
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, code: str):
+        platform, error = _password_platform(code)
+        if error is not None:
+            return error
+
+        username = str(request.data.get("username") or "").strip()
+        password = request.data.get("password") or ""
+        if not username or not password:
+            return Response({"detail": "请填写账号与密码"}, status=400)
+
+        _purge_expired_pending()
+        domain = garmin_sso.platform_domain(platform)
+
+        try:
+            oauth1, oauth2 = garmin_sso.login(username, password, domain)
+        except garmin_sso.MfaRequired as need:
+            pending = PendingLogin.objects.create(
+                id=uuid.uuid4().hex,
+                user=request.user,
+                platform=platform,
+                username=username,
+                mfa_method=need.method,
+            )
+            state = dict(need.state)
+            state["mfa_method"] = need.method
+            pending.set_state(state)
+            pending.save(update_fields=["state_data"])
+            return Response(
+                {
+                    "needs_mfa": True,
+                    "pending_id": pending.id,
+                    "mfa_method": need.method,
+                    "detail": "这次登录需要二次验证，请输入收到的验证码",
+                },
+                status=202,
+            )
+        except garmin_sso.GarminError as exc:
+            logger.warning("账号密码绑定 %s 失败（step=%s）：%s", platform.code, exc.step, exc)
+            SyncLog.objects.create(
+                user=request.user, level="error", message=f"绑定 {platform.name} 失败：{exc}"
+            )
+            return Response({"detail": str(exc), "step": exc.step}, status=502)
+
+        account, created = _finish_password_bind(
+            request.user, platform, username, oauth1, oauth2, domain
+        )
+        return _bind_ok(account, created, platform)
+
+
+class PasswordBindMfaView(APIView):
+    """POST /api/accounts/{code}/bind-password/mfa/ —— 提交二次验证码
+
+    参数：`pending_id`（上一步返回）+ `code`（验证码）。
+    验证码错**不删** pending：用户输错一位很常见，删掉等于让他重新输密码。
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, code: str):
+        platform, error = _password_platform(code)
+        if error is not None:
+            return error
+
+        pending_id = str(request.data.get("pending_id") or "").strip()
+        verify_code = str(request.data.get("code") or "").strip()
+        if not pending_id or not verify_code:
+            return Response({"detail": "请填写验证码"}, status=400)
+
+        pending = PendingLogin.objects.filter(
+            id=pending_id, user=request.user, platform=platform
+        ).first()
+        if pending is None:
+            return Response(
+                {"detail": "这次验证已失效（或不属于当前登录），请重新输入账号密码"},
+                status=400,
+            )
+        if pending.created_at < timezone.now() - timedelta(seconds=PENDING_LOGIN_MAX_AGE):
+            pending.delete()
+            return Response({"detail": "验证码已过期，请重新输入账号密码"}, status=400)
+
+        try:
+            oauth1, oauth2 = garmin_sso.verify_mfa(pending.get_state(), verify_code)
+        except garmin_sso.GarminError as exc:
+            logger.warning("二次验证失败 %s（step=%s）：%s", platform.code, exc.step, exc)
+            # step 为 mfa 时是「验证码不对」，属于用户可自行修正的输入错误
+            status = 400 if exc.step == "mfa" else 502
+            return Response({"detail": str(exc), "step": exc.step}, status=status)
+
+        domain = garmin_sso.platform_domain(platform)
+        login_name = pending.username
+        pending.delete()
+        account, created = _finish_password_bind(
+            request.user, platform, login_name, oauth1, oauth2, domain
+        )
+        return _bind_ok(account, created, platform)
 
 
 class CallbackView(APIView):

@@ -250,6 +250,14 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 # 显式配置比每次靠请求头推导可靠。留空则用 request.build_absolute_uri()。
 PLATFORM_REDIRECT_BASE_URL = os.getenv("PLATFORM_REDIRECT_BASE_URL", "")
 
+# 佳明账号密码渠道用的 OAuth1 消费方密钥（佳明 App 内置的那一份，不是我们申请的）。
+# 留空则运行时从社区维护的镜像地址取并缓存 1 小时；上游挂掉时绑定会失败，
+# 想彻底摆脱这个外部依赖就把这两项填死（见 garmin_sso._consumer）。
+GARMIN_OAUTH_CONSUMER = {
+    "consumer_key": os.getenv("GARMIN_CONSUMER_KEY", ""),
+    "consumer_secret": os.getenv("GARMIN_CONSUMER_SECRET", ""),
+}
+
 # 云托管在负载均衡层终止 TLS，转发到容器是明文 HTTP。
 # 不声明这两项的话 request.scheme 恒为 http，
 # request.build_absolute_uri() 会生成 http:// 的 redirect_uri ——

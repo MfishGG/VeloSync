@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import timedelta
 
@@ -20,7 +21,16 @@ class Platform(models.Model):
     # 原含 `("api_key", "API Key")`，但全项目没有任何 api_key 认证的实现或入口，
     # 属死枚举 —— 留着会让「这个系统支持三种认证」成为错误印象。
     # 真接入需要时再加回（加一个 choice 的迁移成本可以忽略）。
-    AUTH_TYPES = [("oauth2", "OAuth 2.0"), ("mock", "演示")]
+    #
+    # `password`：用**平台自己的账号密码**直接登录换取令牌，适用于没有面向
+    # 个人开发者开放 OAuth 的平台（Garmin Connect 就是典型 —— 它的开放平台
+    # 只对企业合作方开放，个人应用无从申请）。密码只在绑定时用一次、换到令牌
+    # 就丢弃，不落库（见 views.PasswordBindView）。
+    AUTH_TYPES = [
+        ("oauth2", "OAuth 2.0"),
+        ("password", "账号密码"),
+        ("mock", "演示"),
+    ]
 
     code = models.CharField("标识", max_length=32, unique=True)
     name = models.CharField("名称", max_length=64)
@@ -87,8 +97,8 @@ class Platform(models.Model):
 
     @property
     def oauth_missing(self) -> list[str]:
-        """返回尚未配置的凭证字段；演示平台无需凭证，恒为空。"""
-        if self.auth_type == "mock":
+        """返回尚未配置的凭证字段；不需要 OAuth 的平台恒为空。"""
+        if self.auth_type in ("mock", "password"):
             return []
         missing = []
         for field in self.CREDENTIAL_FIELDS:
@@ -113,6 +123,8 @@ class Platform(models.Model):
         """给用户看的下一步提示。"""
         if self.auth_type == "mock":
             return "演示平台无需凭证，可直接绑定"
+        if self.auth_type == "password":
+            return "用平台账号密码直接绑定"
         if self.oauth_ready:
             return "凭证已配置，可跳转平台授权页"
         return "未配置 " + "、".join(self.CREDENTIAL_LABELS[f] for f in self.oauth_missing) + "，可先以演示身份绑定"
@@ -135,11 +147,15 @@ class Platform(models.Model):
         没有回调、拿不到 token，一行都不会落库 —— 它不是绑定。此前 appid 优先，
         于是「凭证配好了、顺手又把 appid 填上」的平台会从能绑退化成绑不上，
         而且界面上看不出来（渠道标签还在，点下去只是跳走）。
+        `password`：平台不开放 OAuth（Garmin），用账号密码在本页直接绑定 ——
+        这是三条渠道里唯一不需要把用户送出小程序的一条。
         """
         if self.auth_type == "mock":
             # 演示平台不走 OAuth。它的 oauth_missing 恒为空，若不先拦一道，
             # 下面会把它判成 "oauth"，语义就反了。
             return "demo"
+        if self.auth_type == "password":
+            return "password"
         if self.oauth_ready:
             return "oauth"
         if self.miniprogram_appid:
@@ -161,6 +177,15 @@ class PlatformAccount(models.Model):
     access_token = models.TextField(blank=True, default="", help_text="Fernet 加密存储")
     refresh_token = models.TextField(blank=True, default="", help_text="Fernet 加密存储")
     token_expires_at = models.DateTimeField(null=True, blank=True)
+    #: 账号密码渠道的附加凭据（JSON，加密存储）。
+    #:
+    #: Garmin 这类平台是「OAuth1 换 OAuth2」的两段式：OAuth2（真正用于调接口的
+    #: Bearer）只有 1 小时，靠 OAuth1 刷新，而 OAuth1 要签在刷新请求上。所以
+    #: 光存 OAuth2 等于一小时后必然失效，OAuth1 的 token/secret 必须一起留下。
+    #: **用户的密码不在这里** —— 它只在绑定的那一次请求里用过就丢。
+    session_data = EncryptedTextField(
+        "平台会话凭据", blank=True, default="", help_text="Fernet 加密的 JSON"
+    )
     status = models.CharField("状态", max_length=16, choices=STATUS, default="active")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -216,6 +241,26 @@ class PlatformAccount(models.Model):
 
     def get_refresh_token(self) -> str:
         return self._decrypt(self.refresh_token, "refresh token")
+
+    # ---- 账号密码渠道的会话凭据 ----
+    def get_session(self) -> dict:
+        """读出 session_data（JSON）。损坏或为空时返回空字典，不让一个坏字段
+        把整个账号列表页打挂。"""
+        raw = self.session_data or ""
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            logger.error("平台账号 %s 的 session_data 不是合法 JSON，已忽略", self.pk)
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def set_session(self, data: dict) -> None:
+        self.session_data = json.dumps(data or {}, ensure_ascii=False)
+
+    def clear_session(self) -> None:
+        self.session_data = ""
 
     def _decrypt(self, ciphertext: str, label: str) -> str:
         """解密失败**不再静默返回空串**，而是记 error 日志。
@@ -306,3 +351,53 @@ class OAuthState(models.Model):
 
     def __str__(self):
         return f"{self.platform_id} · {self.user_id} · {self.nonce[:8]}"
+
+
+class PendingLogin(models.Model):
+    """账号密码登录的「中间态」：等用户输入二次验证码。
+
+    为什么不是一次请求做完：开了两步验证的账号，第一次提交账号密码只会拿到
+    「MFA_REQUIRED」和一个 cookie 会话，必须**在同一个会话里**再提交验证码。
+    Web 端还好，小程序是一次独立的 HTTPS 请求，中间那次会话必须落到某个
+    进程之外 —— 存内存字典就是重演 `OAuthState` 那个坑（两个 gunicorn worker
+    各存一份，用户有一半概率被判「已过期」）。
+
+    cookie 与 login 参数都要留下，且 cookie 等价于半个登录态，所以加密存储。
+    有效期 10 分钟，与 OAuthState 一致，顺手清理，不依赖定时任务。
+    """
+
+    id = models.CharField("标识", max_length=40, primary_key=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="pending_logins"
+    )
+    platform = models.ForeignKey(
+        Platform, on_delete=models.CASCADE, related_name="pending_logins"
+    )
+    #: 用户填的登录名（邮箱/手机号）。**没有密码** —— 密码只在那一次请求里出现。
+    username = models.CharField("登录名", max_length=160)
+    #: 登录会话的 cookie 与请求参数（JSON，加密存储）
+    state_data = EncryptedTextField("会话状态", blank=True, default="")
+    #: 平台建议的验证方式（email / sms / …），仅用于提示文案
+    mfa_method = models.CharField("验证方式", max_length=32, blank=True, default="")
+    created_at = models.DateTimeField("创建时间", auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = "待验证的登录"
+        verbose_name_plural = "待验证的登录"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.platform_id} · {self.username}"
+
+    def get_state(self) -> dict:
+        raw = self.state_data or ""
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def set_state(self, data: dict) -> None:
+        self.state_data = json.dumps(data or {}, ensure_ascii=False)

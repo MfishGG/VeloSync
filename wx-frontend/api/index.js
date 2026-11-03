@@ -66,6 +66,21 @@ const platforms = {
 
   /** 演示身份绑定：无凭证也能跑通全链路 */
   demoBind: (code) => api(`/accounts/${code}/demo-bind/`, { method: "POST" }),
+
+  /**
+   * 账号密码绑定（佳明这类没有开放 OAuth 的平台）。
+   *
+   * 密码只用于换取登录凭据，服务端拿到令牌就丢弃 —— 不入库。
+   * 开了两步验证时返回 `{ needs_mfa: true, pending_id }`，再用 bindPasswordMfa。
+   */
+  bindPassword: (code, payload) =>
+    api(`/accounts/${code}/bind-password/`, { method: "POST", data: payload }),
+
+  bindPasswordMfa: (code, pendingId, verifyCode) =>
+    api(`/accounts/${code}/bind-password/mfa/`, {
+      method: "POST",
+      data: { pending_id: pendingId, code: verifyCode },
+    }),
 };
 
 // ---------------- 同步任务 ----------------
